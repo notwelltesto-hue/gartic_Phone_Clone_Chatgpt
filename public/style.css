@@ -6,56 +6,112 @@ body {
   color: #e0e0e0;
   margin: 0;
   padding: 20px;
+  user-select: none;
   display: flex;
   justify-content: center;
   align-items: flex-start;
   min-height: 100vh;
-  user-select: none;
 }
 
 #container {
-  width: 360px;
+  width: 700px;
+  max-width: 100%;
   background: #2c2c44;
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 h1 {
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 12px;
   font-weight: 700;
   color: #f5a623;
   text-shadow: 0 0 10px #f5a623aa;
 }
 
-label {
-  display: block;
-  margin-bottom: 12px;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: #a0a0b0;
+button {
+  background: #f5a623;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 24px;
+  font-weight: 700;
+  color: #222;
+  cursor: pointer;
+  box-shadow: 0 4px 12px #f5a623cc;
+  transition: background 0.2s ease;
+  user-select: none;
 }
 
-#name {
-  width: 100%;
+button:disabled {
+  background: #999966;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+input[type='text'] {
   padding: 10px 14px;
-  font-size: 1rem;
   border-radius: 8px;
   border: none;
   outline: none;
   background: #45456a;
   color: #eee;
+  font-size: 1rem;
   transition: background 0.2s ease;
+  width: 240px;
+  margin-right: 8px;
 }
 
-#name:focus {
+input[type='text']:focus {
   background: #565678;
   box-shadow: 0 0 6px #f5a623;
 }
 
+#homeScreen,
+#gameScreen {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#homeScreen.active,
+#gameScreen.active {
+  display: flex;
+}
+
+#lobbiesList {
+  max-height: 180px;
+  overflow-y: auto;
+  background: #37374f;
+  border-radius: 8px;
+  padding: 10px;
+  box-shadow: inset 0 0 10px #29294a;
+  font-size: 0.9rem;
+  user-select: text;
+}
+
+.lobby-item {
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+  display: flex;
+  justify-content: space-between;
+  color: #eee;
+  font-weight: 600;
+  margin-bottom: 6px;
+  user-select: none;
+}
+
+.lobby-item:hover {
+  background: #444466;
+}
+
 #players {
-  margin-top: 16px;
+  margin-top: 12px;
   border: 1px solid #444466;
   border-radius: 8px;
   max-height: 90px;
@@ -80,9 +136,9 @@ label {
 }
 
 #phaseInfo {
-  margin-top: 18px;
+  margin-top: 12px;
   font-weight: 700;
-  font-size: 1.1rem;
+  font-size: 1.2rem;
   color: #f5a623;
   text-align: center;
   min-height: 30px;
@@ -90,24 +146,24 @@ label {
 }
 
 #timer {
-  font-size: 0.9rem;
+  font-size: 1rem;
   text-align: center;
   margin-top: 6px;
   color: #c1c1c1;
 }
 
 #inputSection {
-  margin-top: 24px;
+  margin-top: 16px;
   text-align: center;
 }
 
 #inputText {
   width: 100%;
-  min-height: 80px;
-  font-size: 1.1rem;
+  min-height: 120px;
+  font-size: 1.2rem;
   border-radius: 10px;
   border: none;
-  padding: 12px;
+  padding: 14px;
   background: #45456a;
   color: #eee;
   resize: none;
@@ -129,50 +185,35 @@ label {
   background: #29294a;
   touch-action: none;
   cursor: crosshair;
-  width: 320px;
-  height: 220px;
+  width: 640px;
+  height: 440px;
   box-shadow: 0 0 12px #f5a62388;
 }
 
 #submitBtn {
-  margin-top: 18px;
-  padding: 14px 40px;
-  font-size: 1.2rem;
-  background: #f5a623;
-  border: none;
-  border-radius: 12px;
-  font-weight: 700;
-  color: #222;
-  cursor: pointer;
-  user-select: none;
-  box-shadow: 0 4px 12px #f5a623cc;
-  transition: background 0.2s ease;
-}
-
-#submitBtn:disabled {
-  background: #999966;
-  cursor: not-allowed;
-  box-shadow: none;
+  margin-top: 20px;
+  padding: 16px 48px;
+  font-size: 1.4rem;
 }
 
 #chain {
   margin-top: 24px;
-  max-height: 320px;
+  max-height: 340px;
   overflow-y: auto;
   background: #37374f;
   border-radius: 12px;
   padding: 10px;
   box-shadow: inset 0 0 15px #29294a;
+  font-size: 1.1rem;
 }
 
 .chain-entry {
-  margin-bottom: 20px;
-  padding-bottom: 10px;
+  margin-bottom: 22px;
+  padding-bottom: 12px;
   border-bottom: 1px solid #565678aa;
 }
 
 .chain-text {
-  font-size: 1.1rem;
   font-style: italic;
   color: #f5a623;
   text-align: center;
@@ -182,11 +223,11 @@ label {
 
 canvas.chain-canvas {
   display: block;
-  margin: 10px auto;
+  margin: 12px auto;
   border-radius: 12px;
   box-shadow: 0 0 10px #f5a623bb;
-  width: 320px;
-  height: 220px;
+  width: 640px;
+  height: 440px;
   user-select: none;
 }
 
@@ -195,7 +236,7 @@ canvas.chain-canvas {
   font-weight: 600;
   font-style: italic;
   color: #bbb;
-  min-height: 24px;
+  min-height: 28px;
   text-align: center;
   user-select: none;
 }
