@@ -31,6 +31,10 @@
       <strong>Players</strong>
       <div id="players">(no one yet)</div>
     </div>
+    <div class="tool">
+      <strong>Current Drawer:</strong> <span id="drawerName">-</span><br/>
+      <strong>Prompt:</strong> <span id="promptWord">-</span>
+    </div>
   </div>
 
   <div>
@@ -45,6 +49,8 @@
   const sizeInput = document.getElementById('size');
   const clearBtn = document.getElementById('clearBtn');
   const playersEl = document.getElementById('players');
+  const drawerNameEl = document.getElementById('drawerName');
+  const promptWordEl = document.getElementById('promptWord');
 
   const clientId = Math.random().toString(36).slice(2,9);
   const wsProtocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
@@ -85,7 +91,16 @@
     ctx.closePath();
   }
 
+  function enableDrawing(enable) {
+    if (enable) {
+      canvas.style.pointerEvents = 'auto';
+    } else {
+      canvas.style.pointerEvents = 'none';
+    }
+  }
+
   canvas.addEventListener('pointerdown', (e) => {
+    if (!canDraw) return;
     const pt = toCanvasPos(e);
     beginStroke(pt);
     send({ t: 'begin', id: clientId, name: nameInput.value || 'anon', color: colorInput.value, size: +sizeInput.value, x: pt.x, y: pt.y });
@@ -93,7 +108,7 @@
   });
 
   canvas.addEventListener('pointermove', (e) => {
-    if (!drawing) return;
+    if (!drawing || !canDraw) return;
     const pt = toCanvasPos(e);
     strokeTo(pt, colorInput.value, +sizeInput.value);
     send({ t: 'stroke', id: clientId, x: pt.x, y: pt.y });
@@ -101,7 +116,7 @@
   });
 
   window.addEventListener('pointerup', () => {
-    if (!drawing) return;
+    if (!drawing || !canDraw) return;
     endStroke();
     send({ t: 'end', id: clientId });
   });
@@ -110,6 +125,8 @@
     ctx.clearRect(0,0,canvas.width,canvas.height);
     send({ t: 'clear', id: clientId });
   });
+
+  let canDraw = false;
 
   ws.addEventListener('message', (ev) => {
     let msg;
@@ -124,7 +141,23 @@
       return;
     }
 
-    // Ignore your own drawing messages to avoid duplicate lines
+    if (msg.t === 'roundStart') {
+      drawerNameEl.textContent = msg.drawerId && players[msg.drawerId] ? players[msg.drawerId] : 'Unknown';
+      promptWordEl.textContent = msg.prompt;
+
+      // Text to Speech prompt
+      if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(`Draw: ${msg.prompt}`);
+        speechSynthesis.cancel();
+        speechSynthesis.speak(utterance);
+      }
+
+      canDraw = (clientId === msg.drawerId);
+      enableDrawing(canDraw);
+      return;
+    }
+
+    // Ignore own drawing messages
     if (msg.id === clientId) return;
 
     if (msg.t === 'clear') {
