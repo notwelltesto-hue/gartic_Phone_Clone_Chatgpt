@@ -1,7 +1,7 @@
 {
   "name": "gartic-clone",
-  "version": "1.0.0",
-  "description": "Simple Gartic Phone–style clone (Node + Socket.IO)",
+  "version": "1.1.0",
+  "description": "Gartic Phone–style clone with large canvas, palette, thumbnails, reveal autoplay, TTS and voting",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
