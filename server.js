@@ -9,18 +9,17 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Game state
-const players = {}; // id -> name
+const players = {};
 let playerOrder = [];
-const chain = []; // entries: { type: 'text', content } or { type: 'drawing', commands, brush }
+const chain = [];
 
-let phaseIndex = -1; // which turn, cycles 0..playerOrder.length*2-1
+let phaseIndex = -1;
 let phaseTimer = null;
 const PHASE_DURATION = 30000;
 
 function broadcast(data) {
   const msg = JSON.stringify(data);
-  wss.clients.forEach((client) => {
+  wss.clients.forEach(client => {
     if (client.readyState === WebSocket.OPEN) client.send(msg);
   });
 }
@@ -48,7 +47,7 @@ function startNextPhase() {
 
   phaseIndex++;
   if (phaseIndex >= playerOrder.length * 2) {
-    // Game over, restart
+    // Game restart after one full cycle
     phaseIndex = 0;
     chain.length = 0;
     console.log('Game restarted');
@@ -69,7 +68,7 @@ function startNextPhase() {
 
   clearTimeout(phaseTimer);
   phaseTimer = setTimeout(() => {
-    // Advance if no input received on time
+    // Auto advance if no input in time
     startNextPhase();
   }, PHASE_DURATION);
 }
@@ -87,14 +86,18 @@ wss.on('connection', (ws) => {
 
     if (data.t === 'join') {
       clientId = data.id;
-      players[clientId] = data.name || 'anon';
+      let name = data.name && data.name.trim();
+      if (!name) {
+        name = `Guest${Math.floor(10000 + Math.random() * 90000)}`;
+      }
+      players[clientId] = name;
 
       if (!playerOrder.includes(clientId)) playerOrder.push(clientId);
 
       sendPlayersUpdate();
 
       if (phaseIndex === -1 && playerOrder.length >= 2) {
-        phaseIndex = -1; // reset
+        phaseIndex = -1;
         startNextPhase();
       }
       return;
@@ -102,7 +105,7 @@ wss.on('connection', (ws) => {
 
     if (data.t === 'input') {
       if (data.id !== getCurrentPlayerId()) {
-        // Not this player's turn
+        // Not current player's turn
         return;
       }
 
