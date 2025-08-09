@@ -3,38 +3,61 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gartic Phone - Secret Phases Prototype</title>
+  <title>Gartic Phone Lobby & Game</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="container">
-    <h1>Gartic Phone</h1>
-    <label for="name">Enter your name:</label>
-    <input
-      type="text"
-      id="name"
-      placeholder="Your name here..."
-      maxlength="20"
-      autocomplete="off"
-      spellcheck="false"
-    />
 
-    <div id="players">(Waiting for players...)</div>
+    <!-- HOME SCREEN -->
+    <div id="homeScreen" class="active">
+      <h1>Gartic Phone</h1>
 
-    <div id="phaseInfo">Waiting for enough players...</div>
-    <div id="timer"></div>
+      <div>
+        <button id="btnCreatePublic">Create Public Lobby</button>
+        <button id="btnCreatePrivate">Create Private Lobby</button>
+      </div>
 
-    <div id="inputSection">
-      <textarea
-        id="inputText"
-        placeholder="Type your prompt or description here..."
-      ></textarea>
-      <canvas id="inputCanvas" width="320" height="220"></canvas>
-      <button id="submitBtn" disabled>Submit</button>
-      <div id="status"></div>
+      <div style="margin:12px 0;">
+        <input id="joinCodeInput" type="text" placeholder="Enter Lobby Code" maxlength="5" />
+        <button id="btnJoinLobby">Join Lobby</button>
+      </div>
+
+      <h3>Public Lobbies</h3>
+      <div id="lobbiesList">(Loading...)</div>
+
+      <div id="homeStatus"></div>
     </div>
 
-    <div id="chain"></div>
+    <!-- GAME SCREEN -->
+    <div id="gameScreen">
+      <label for="name">Enter your name:</label>
+      <input
+        type="text"
+        id="name"
+        placeholder="Your name here..."
+        maxlength="20"
+        autocomplete="off"
+        spellcheck="false"
+      />
+
+      <div id="players">(Waiting for players...)</div>
+
+      <div id="phaseInfo">Waiting for enough players...</div>
+      <div id="timer"></div>
+
+      <div id="inputSection">
+        <textarea
+          id="inputText"
+          placeholder="Type your prompt or description here..."
+        ></textarea>
+        <canvas id="inputCanvas" width="640" height="440"></canvas>
+        <button id="submitBtn" disabled>Submit</button>
+        <div id="status"></div>
+      </div>
+
+      <div id="chain"></div>
+    </div>
   </div>
 
   <script>
@@ -42,7 +65,17 @@
       const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
       const ws = new WebSocket(wsProtocol + location.host);
 
-      // Elements
+      // DOM Elements
+      const homeScreen = document.getElementById('homeScreen');
+      const gameScreen = document.getElementById('gameScreen');
+      const lobbiesList = document.getElementById('lobbiesList');
+      const homeStatus = document.getElementById('homeStatus');
+      const joinCodeInput = document.getElementById('joinCodeInput');
+      const btnJoinLobby = document.getElementById('btnJoinLobby');
+      const btnCreatePublic = document.getElementById('btnCreatePublic');
+      const btnCreatePrivate = document.getElementById('btnCreatePrivate');
+
+      // Game DOM Elements
       const nameInput = document.getElementById('name');
       const playersEl = document.getElementById('players');
       const phaseInfoEl = document.getElementById('phaseInfo');
@@ -53,8 +86,9 @@
       const statusEl = document.getElementById('status');
       const chainEl = document.getElementById('chain');
 
-      // Client state
+      // Client State
       const clientId = Math.random().toString(36).slice(2, 9);
+      let currentLobbyCode = null;
       let players = {};
       let playerOrder = [];
       let chain = [];
@@ -68,154 +102,75 @@
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.strokeStyle = '#f5a623';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 4;
 
       let drawing = false;
       let drawCommands = [];
 
-      // Utility for mouse/touch position
+      function clearCanvas() {
+        ctx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+      }
+
       function toCanvasPos(e) {
         const rect = inputCanvas.getBoundingClientRect();
         const scaleX = inputCanvas.width / rect.width;
         const scaleY = inputCanvas.height / rect.height;
-        const x =
-          ((e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left) * scaleX;
-        const y =
-          ((e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top) * scaleY;
+        const x = ((e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left) * scaleX;
+        const y = ((e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top) * scaleY;
         return { x, y };
       }
 
-      function beginStroke(pt) {
+      inputCanvas.addEventListener('mousedown', (e) => {
+        if (!canInput || currentInputType !== 'drawing') return;
         drawing = true;
-        drawCommands.push({ x: pt.x, y: pt.y, type: 'begin' });
+        const pos = toCanvasPos(e);
+        drawCommands.push({ type: 'begin', x: pos.x, y: pos.y });
         ctx.beginPath();
-        ctx.moveTo(pt.x, pt.y);
-      }
+        ctx.moveTo(pos.x, pos.y);
+      });
 
-      function strokeTo(pt) {
-        drawCommands.push({ x: pt.x, y: pt.y, type: 'stroke' });
-        ctx.lineTo(pt.x, pt.y);
+      inputCanvas.addEventListener('mousemove', (e) => {
+        if (!drawing) return;
+        const pos = toCanvasPos(e);
+        drawCommands.push({ type: 'stroke', x: pos.x, y: pos.y });
+        ctx.lineTo(pos.x, pos.y);
         ctx.stroke();
-      }
+      });
 
-      function endStroke() {
+      inputCanvas.addEventListener('mouseup', (e) => {
+        if (!drawing) return;
         drawing = false;
         drawCommands.push({ type: 'end' });
-        ctx.closePath();
-      }
-
-      // Input canvas event handlers
-      inputCanvas.addEventListener('pointerdown', (e) => {
-        if (!canInput) return;
-        beginStroke(toCanvasPos(e));
-        e.preventDefault();
       });
-      inputCanvas.addEventListener('pointermove', (e) => {
-        if (!drawing || !canInput) return;
-        strokeTo(toCanvasPos(e));
-        e.preventDefault();
-      });
-      window.addEventListener('pointerup', (e) => {
-        if (drawing && canInput) endStroke();
+      inputCanvas.addEventListener('mouseleave', (e) => {
+        if (!drawing) return;
+        drawing = false;
+        drawCommands.push({ type: 'end' });
       });
 
-      // Render chain
-      function renderChain() {
-        chainEl.innerHTML = '';
-        chain.forEach((entry, idx) => {
-          const div = document.createElement('div');
-          div.className = 'chain-entry';
-
-          if (entry.type === 'text') {
-            div.innerHTML = `<div class="chain-text">${entry.content}</div>`;
-          } else if (entry.type === 'drawing') {
-            const c = document.createElement('canvas');
-            c.className = 'chain-canvas';
-            c.width = 320;
-            c.height = 220;
-            div.appendChild(c);
-
-            const ctx2 = c.getContext('2d');
-            ctx2.lineCap = 'round';
-            ctx2.lineJoin = 'round';
-            ctx2.strokeStyle = entry.brush.color;
-            ctx2.lineWidth = entry.brush.size;
-
-            ctx2.beginPath();
-            entry.commands.forEach((cmd) => {
-              if (cmd.type === 'begin') ctx2.moveTo(cmd.x, cmd.y);
-              else if (cmd.type === 'stroke') ctx2.lineTo(cmd.x, cmd.y);
-              else if (cmd.type === 'end') ctx2.closePath();
-            });
-            ctx2.stroke();
-          }
-
-          chainEl.appendChild(div);
-        });
-      }
-
-      function resetInput() {
-        inputText.value = '';
-        drawCommands = [];
-        ctx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
-      }
-
-      function setInput(type, isCurrentPlayer) {
-        currentInputType = type;
-        canInput = isCurrentPlayer;
-
-        if (!isCurrentPlayer) {
-          // Hide inputs if not current player
-          inputText.style.display = 'none';
-          inputCanvas.style.display = 'none';
-          submitBtn.disabled = true;
-          statusEl.textContent = `Waiting for player "${
-            players[currentPlayerId] || 'Unknown'
-          }" to ${type === 'text' ? 'write' : 'draw'}...`;
-          return;
-        }
-
-        // Show only the relevant input
-        if (type === 'text') {
-          inputText.style.display = 'block';
-          inputCanvas.style.display = 'none';
-          inputText.disabled = false;
-          inputText.focus();
-        } else if (type === 'drawing') {
-          inputText.style.display = 'none';
-          inputCanvas.style.display = 'block';
-        }
-
-        submitBtn.disabled = false;
-        resetInput();
-
-        statusEl.textContent = `Your turn to ${
-          type === 'text' ? 'write a prompt' : 'draw the prompt'
-        }.`;
-      }
-
-      // Countdown timer display
+      // Timer
       let timerInterval = null;
-      let phaseEndTime = 0;
       function startTimer() {
+        let timeLeft = 30;
+        timerEl.textContent = `Time left: ${timeLeft}s`;
         clearInterval(timerInterval);
-        phaseEndTime = Date.now() + 30000;
-        timerEl.textContent = 'Time left: 30s';
-
         timerInterval = setInterval(() => {
-          const diff = Math.max(0, phaseEndTime - Date.now());
-          const seconds = Math.ceil(diff / 1000);
-          timerEl.textContent = `Time left: ${seconds}s`;
-          if (diff <= 0) clearInterval(timerInterval);
-        }, 200);
+          timeLeft--;
+          if (timeLeft <= 0) {
+            clearInterval(timerInterval);
+            timerEl.textContent = '';
+            submitBtn.click();
+            return;
+          }
+          timerEl.textContent = `Time left: ${timeLeft}s`;
+        }, 1000);
       }
-
       function stopTimer() {
         clearInterval(timerInterval);
         timerEl.textContent = '';
       }
 
-      // Text-to-speech
+      // TTS
       function announce(text) {
         if ('speechSynthesis' in window) {
           speechSynthesis.cancel();
@@ -224,6 +179,22 @@
         }
       }
 
+      // UI Helpers
+      function showHome() {
+        homeScreen.classList.add('active');
+        gameScreen.classList.remove('active');
+      }
+      function showGame() {
+        homeScreen.classList.remove('active');
+        gameScreen.classList.add('active');
+      }
+
+      // Lobby refresh
+      function refreshLobbies() {
+        ws.send(JSON.stringify({ t: 'listLobbies' }));
+      }
+
+      // Submit input
       submitBtn.addEventListener('click', () => {
         if (!canInput) return;
 
@@ -262,14 +233,88 @@
         }
       });
 
-      nameInput.addEventListener('change', () => {
-        ws.send(
-          JSON.stringify({ t: 'join', id: clientId, name: nameInput.value || '' }),
-        );
-      });
+      // Input display logic
+      function setInput(type, canEdit) {
+        canInput = canEdit;
+        currentInputType = type;
+        inputText.style.display = 'none';
+        inputCanvas.style.display = 'none';
+        submitBtn.disabled = !canEdit;
+        clearCanvas();
+        drawCommands = [];
+        inputText.value = '';
 
+        if (!type) return;
+
+        if (type === 'text') {
+          inputText.style.display = canEdit ? 'block' : 'none';
+        } else if (type === 'drawing') {
+          inputCanvas.style.display = canEdit ? 'block' : 'none';
+        }
+      }
+
+      // Render chain — show only previous item (context)
+      function renderChain() {
+        chainEl.innerHTML = '';
+
+        if (currentPhase === -1) return;
+
+        const prevIndex = currentPhase - 1;
+        if (prevIndex < 0) return;
+
+        const prevEntry = chain[prevIndex];
+        if (!prevEntry) return;
+
+        const div = document.createElement('div');
+        div.className = 'chain-entry';
+
+        if (currentInputType === 'drawing' && prevEntry.type === 'text') {
+          div.innerHTML = `<div class="chain-text">${prevEntry.content}</div>`;
+        } else if (currentInputType === 'text' && prevEntry.type === 'drawing') {
+          const c = document.createElement('canvas');
+          c.className = 'chain-canvas';
+          c.width = 640;
+          c.height = 440;
+          div.appendChild(c);
+
+          const ctx2 = c.getContext('2d');
+          ctx2.lineCap = 'round';
+          ctx2.lineJoin = 'round';
+          ctx2.strokeStyle = prevEntry.brush.color;
+          ctx2.lineWidth = prevEntry.brush.size;
+
+          ctx2.beginPath();
+          prevEntry.commands.forEach((cmd) => {
+            if (cmd.type === 'begin') ctx2.moveTo(cmd.x, cmd.y);
+            else if (cmd.type === 'stroke') ctx2.lineTo(cmd.x, cmd.y);
+            else if (cmd.type === 'end') ctx2.closePath();
+          });
+          ctx2.stroke();
+        } else {
+          div.textContent = '(Waiting for previous input...)';
+        }
+
+        chainEl.appendChild(div);
+      }
+
+      // Update players list
+      function updatePlayersList() {
+        if (playerOrder.length === 0) {
+          playersEl.textContent = '(Waiting for players...)';
+          return;
+        }
+        playersEl.innerHTML = playerOrder
+          .map((id) => {
+            const cls = id === currentPlayerId ? 'player-name player-current' : 'player-name';
+            return `<div class="${cls}">${players[id] || id}</div>`;
+          })
+          .join('');
+      }
+
+      // WebSocket events
       ws.addEventListener('open', () => {
-        ws.send(JSON.stringify({ t: 'join', id: clientId, name: nameInput.value || '' }));
+        refreshLobbies();
+        showHome();
       });
 
       ws.addEventListener('message', (ev) => {
@@ -280,20 +325,39 @@
           return;
         }
 
+        if (msg.t === 'publicLobbies') {
+          if (msg.lobbies.length === 0) {
+            lobbiesList.textContent = '(No public lobbies)';
+            return;
+          }
+          lobbiesList.innerHTML = '';
+          msg.lobbies.forEach((lobby) => {
+            const div = document.createElement('div');
+            div.className = 'lobby-item';
+            div.textContent = `${lobby.code} — ${lobby.players} player${lobby.players !== 1 ? 's' : ''}`;
+            div.onclick = () => {
+              joinLobby(lobby.code);
+            };
+            lobbiesList.appendChild(div);
+          });
+          return;
+        }
+
+        if (msg.t === 'lobbyCreated') {
+          homeStatus.textContent = `Lobby created! Code: ${msg.code}`;
+          joinLobby(msg.code);
+          return;
+        }
+
+        if (msg.t === 'error') {
+          alert(msg.msg);
+          return;
+        }
+
         if (msg.t === 'playersUpdate') {
           players = msg.players || {};
           playerOrder = msg.order || [];
-
-          if (playerOrder.length === 0) {
-            playersEl.textContent = '(Waiting for players...)';
-          } else {
-            playersEl.innerHTML = playerOrder
-              .map((id) => {
-                const cls = id === currentPlayerId ? 'player-name player-current' : 'player-name';
-                return `<div class="${cls}">${players[id] || id}</div>`;
-              })
-              .join('');
-          }
+          updatePlayersList();
           return;
         }
 
@@ -314,13 +378,49 @@
           }`;
 
           setInput(currentInputType, clientId === currentPlayerId);
+
           if (clientId === currentPlayerId) {
-            announce(
-              `Your turn to ${currentInputType === 'text' ? 'write' : 'draw'}`,
-            );
+            announce(`Your turn to ${currentInputType === 'text' ? 'write' : 'draw'}`);
           }
           startTimer();
         }
+      });
+
+      // Lobby join logic
+      function joinLobby(code) {
+        if (!code || code.length !== 5) {
+          alert('Please enter a valid 5-character lobby code.');
+          return;
+        }
+        currentLobbyCode = code.toUpperCase();
+        showGame();
+        ws.send(
+          JSON.stringify({
+            t: 'joinLobby',
+            code: currentLobbyCode,
+            id: clientId,
+            name: nameInput.value || '',
+          }),
+        );
+      }
+
+      // Buttons handlers
+      btnCreatePublic.onclick = () => {
+        ws.send(JSON.stringify({ t: 'createLobby', isPublic: true }));
+      };
+      btnCreatePrivate.onclick = () => {
+        ws.send(JSON.stringify({ t: 'createLobby', isPublic: false }));
+      };
+      btnJoinLobby.onclick = () => {
+        joinLobby(joinCodeInput.value);
+      };
+
+      // Name change sends update (for convenience)
+      nameInput.addEventListener('change', () => {
+        if (!currentLobbyCode) return;
+        ws.send(
+          JSON.stringify({ t: 'joinLobby', code: currentLobbyCode, id: clientId, name: nameInput.value || '' }),
+        );
       });
     })();
   </script>
