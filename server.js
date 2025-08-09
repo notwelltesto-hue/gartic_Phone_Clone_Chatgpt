@@ -1,221 +1,272 @@
 // server.js
 const express = require('express');
 const http = require('http');
-const WebSocket = require('ws');
-const path = require('path');
+const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const io = new Server(server);
 
-app.use(express.static(path.join(__dirname, 'public')));
+const PORT = process.env.PORT || 3000;
 
-function makeCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 5; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
-  return code;
+app.use(express.static('public'));
+app.use(express.json({ limit: '10mb' })); // accept big base64 images
+
+// In-memory rooms: { code: { players: [{id,name}], hostId, isPublic, state, round, nRounds, slotPrompts, submissions } }
+const rooms = {};
+const randomPrompts = [
+  "A cat riding a skateboard",
+  "A giant pizza in space",
+  "A wizard making coffee",
+  "A laughing banana",
+  "A robot planting a tree",
+  "A sleepy dinosaur reading"
+];
+
+function makeCode(len = 6) {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
 }
 
-const lobbies = {}; // code -> lobby
-
-// Broadcast helper for a lobby
-function broadcastLobby(lobby, data) {
-  const msg = JSON.stringify(data);
-  for (const [ws] of lobby.playersSockets.entries()) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
-  }
+function publicRoomList() {
+  return Object.entries(rooms)
+    .filter(([_, r]) => r.isPublic && r.state === 'lobby')
+    .map(([code, r]) => ({ code, players: r.players.length }));
 }
 
-function sendPlayersUpdate(lobby) {
-  broadcastLobby(lobby, {
-    t: 'playersUpdate',
-    players: lobby.players,
-    order: lobby.playerOrder,
-    hostId: lobby.hostId,
-    gameStarted: lobby.gameStarted,
+// Socket events
+io.on('connection', socket => {
+  console.log('connect', socket.id);
+
+  // Send current public lobbies on new connection
+  socket.emit('lobbyList', publicRoomList());
+
+  socket.on('createLobby', ({ name, isPublic }) => {
+    const code = makeCode();
+    rooms[code] = {
+      players: [{ id: socket.id, name }],
+      hostId: socket.id,
+      isPublic: !!isPublic,
+      state: 'lobby',
+      round: 0,
+      nRounds: 0,
+      slotPrompts: [],
+      submissions: []
+    };
+    socket.join(code);
+    socket.emit('lobbyCreated', { code });
+    io.emit('lobbyList', publicRoomList());
+    updateRoomPlayers(code);
   });
-}
 
-function sendChainUpdate(lobby) {
-  broadcastLobby(lobby, { t: 'chainUpdate', chain: lobby.chain });
-}
-
-function getCurrentPlayerId(lobby) {
-  if (lobby.playerOrder.length === 0) return null;
-  return lobby.playerOrder[lobby.phaseIndex % lobby.playerOrder.length];
-}
-
-function getCurrentInputType(lobby) {
-  return lobby.phaseIndex % 2 === 0 ? 'text' : 'drawing';
-}
-
-function startNextPhase(lobbyCode) {
-  const lobby = lobbies[lobbyCode];
-  if (!lobby) return;
-  if (lobby.playerOrder.length === 0) return;
-
-  lobby.phaseIndex++;
-  if (lobby.phaseIndex >= lobby.playerOrder.length * 2) {
-    // finish game -> send gameEnded and reset
-    broadcastLobby(lobby, { t: 'gameEnded' });
-    lobby.gameStarted = false;
-    lobby.phaseIndex = -1;
-    // keep chain for review, host can restart later
-    sendPlayersUpdate(lobby);
-    return;
-  }
-
-  const playerId = getCurrentPlayerId(lobby);
-  const inputType = getCurrentInputType(lobby);
-
-  broadcastLobby(lobby, {
-    t: 'phaseStart',
-    playerId,
-    inputType,
-    phaseIndex: lobby.phaseIndex,
-    time: 30,
+  socket.on('getLobbies', () => {
+    socket.emit('lobbyList', publicRoomList());
   });
-  sendChainUpdate(lobby);
 
-  clearTimeout(lobby.phaseTimer);
-  lobby.phaseTimer = setTimeout(() => startNextPhase(lobbyCode), 30000);
-}
+  socket.on('joinLobby', ({ code, name }) => {
+    const room = rooms[code];
+    if (!room) {
+      socket.emit('errorMsg', 'Lobby not found');
+      return;
+    }
+    if (room.state !== 'lobby') {
+      socket.emit('errorMsg', 'Game already started');
+      return;
+    }
+    room.players.push({ id: socket.id, name });
+    socket.join(code);
+    socket.emit('joined', { code });
+    io.emit('lobbyList', publicRoomList());
+    updateRoomPlayers(code);
+  });
 
-// Map ws -> { lobbyCode, id }
-const wsClients = new Map();
+  socket.on('leaveLobby', ({ code }) => {
+    leaveRoom(socket.id, code);
+  });
 
-wss.on('connection', (ws) => {
-  wsClients.set(ws, { lobbyCode: null, id: null });
+  socket.on('toggleReady', ({ code }) => {
+    const room = rooms[code];
+    if (!room) return;
+    const p = room.players.find(x => x.id === socket.id);
+    if (!p) return;
+    p.ready = !p.ready;
+    updateRoomPlayers(code);
+  });
 
-  ws.on('message', (raw) => {
-    let data;
-    try { data = JSON.parse(raw); } catch { return; }
-
-    // Create lobby
-    if (data.t === 'createLobby') {
-      let code;
-      do { code = makeCode(); } while (lobbies[code]);
-      lobbies[code] = {
-        hostId: null,
-        isPublic: !!data.isPublic,
-        players: {},           // id -> { name }
-        playerOrder: [],       // [id,...]
-        chain: [],             // sequence of entries
-        phaseIndex: -1,
-        phaseTimer: null,
-        gameStarted: false,
-        playersSockets: new Map(), // ws -> id
-      };
-      ws.send(JSON.stringify({ t: 'lobbyCreated', code, isPublic: lobbies[code].isPublic }));
+  socket.on('startGame', ({ code }) => {
+    const room = rooms[code];
+    if (!room) return;
+    if (socket.id !== room.hostId) {
+      socket.emit('errorMsg', 'Only host can start');
+      return;
+    }
+    if (room.players.length < 2) {
+      socket.emit('errorMsg', 'Need at least 2 players');
       return;
     }
 
-    // List public lobbies
-    if (data.t === 'listLobbies') {
-      const publicLobbies = Object.entries(lobbies)
-        .filter(([, l]) => l.isPublic && !l.gameStarted)
-        .map(([code, l]) => ({ code, players: Object.keys(l.players).length }));
-      ws.send(JSON.stringify({ t: 'publicLobbies', lobbies: publicLobbies }));
-      return;
-    }
+    // Request initial prompts from every player (they can type or server will pick random)
+    room.state = 'gatheringPrompts';
+    room.slotPrompts = new Array(room.players.length).fill(null);
+    io.to(code).emit('requestInitialPrompts');
+    updateRoomPlayers(code);
+  });
 
-    // Join lobby
-    if (data.t === 'joinLobby') {
-      const { code, id, name } = data;
-      const lobby = lobbies[code];
-      if (!lobby) {
-        ws.send(JSON.stringify({ t: 'error', msg: 'Lobby not found' }));
-        return;
-      }
+  socket.on('submitInitialPrompt', ({ code, prompt }) => {
+    const room = rooms[code];
+    if (!room || room.state !== 'gatheringPrompts') return;
+    const idx = room.players.findIndex(p => p.id === socket.id);
+    if (idx === -1) return;
+    room.slotPrompts[idx] = (prompt && prompt.trim()) || randomPrompts[Math.floor(Math.random()*randomPrompts.length)];
 
-      if (!lobby.hostId) lobby.hostId = id;
-      const playerName = (name && name.trim()) || `Guest${Math.floor(10000 + Math.random() * 90000)}`;
-
-      lobby.players[id] = { name: playerName };
-      if (!lobby.playerOrder.includes(id)) lobby.playerOrder.push(id);
-      lobby.playersSockets.set(ws, id);
-
-      wsClients.set(ws, { lobbyCode: code, id });
-      sendPlayersUpdate(lobby);
-
-      // send initial chain & phase info
-      ws.send(JSON.stringify({ t: 'chainUpdate', chain: lobby.chain }));
-      if (lobby.phaseIndex >= 0 && lobby.gameStarted) {
-        ws.send(JSON.stringify({ t: 'phaseStart', playerId: getCurrentPlayerId(lobby), inputType: getCurrentInputType(lobby), phaseIndex: lobby.phaseIndex, time: 30 }));
-      }
-      return;
-    }
-
-    // Start game (host only)
-    if (data.t === 'startGame') {
-      const client = wsClients.get(ws);
-      if (!client) return;
-      const lobby = lobbies[client.lobbyCode];
-      if (!lobby) return;
-      if (client.id !== lobby.hostId) {
-        ws.send(JSON.stringify({ t: 'error', msg: 'Only host can start' }));
-        return;
-      }
-      if (lobby.playerOrder.length < 2) {
-        ws.send(JSON.stringify({ t: 'error', msg: 'Need 2+ players' }));
-        return;
-      }
-      lobby.gameStarted = true;
-      lobby.phaseIndex = -1;
-      lobby.chain.length = 0;
-      sendPlayersUpdate(lobby);
-      startNextPhase(client.lobbyCode);
-      return;
-    }
-
-    // Input submitted
-    if (data.t === 'input') {
-      const client = wsClients.get(ws);
-      if (!client || !client.lobbyCode) return;
-      const lobby = lobbies[client.lobbyCode];
-      if (!lobby || !lobby.gameStarted) return;
-
-      if (data.id !== getCurrentPlayerId(lobby)) return;
-      if (data.type !== getCurrentInputType(lobby)) return;
-
-      if (data.type === 'text' && typeof data.content === 'string') {
-        lobby.chain[lobby.phaseIndex] = { type: 'text', content: data.content };
-        startNextPhase(client.lobbyCode);
-      } else if (data.type === 'drawing' && Array.isArray(data.commands) && data.brush) {
-        lobby.chain[lobby.phaseIndex] = { type: 'drawing', commands: data.commands, brush: data.brush };
-        startNextPhase(client.lobbyCode);
-      }
-      return;
+    if (room.slotPrompts.every(x => x !== null)) {
+      // all prompts collected -> init game
+      const n = room.players.length;
+      room.nRounds = n;
+      room.round = 0;
+      // submissions is an array of rounds, each is array of size n (slots)
+      room.submissions = Array.from({ length: n }, () => Array(n).fill(null));
+      // store initial prompts separately
+      // Move to first round: draw round (round 0 is draw)
+      room.state = 'playing';
+      // send first round content
+      distributeRound(code);
+      updateRoomPlayers(code);
+    } else {
+      updateRoomPlayers(code);
     }
   });
 
-  ws.on('close', () => {
-    const client = wsClients.get(ws);
-    if (!client) { wsClients.delete(ws); return; }
-    const { lobbyCode, id } = client;
-    if (!lobbyCode) { wsClients.delete(ws); return; }
-    const lobby = lobbies[lobbyCode];
-    if (!lobby) { wsClients.delete(ws); return; }
-
-    delete lobby.players[id];
-    lobby.playerOrder = lobby.playerOrder.filter(pid => pid !== id);
-    // remove socket entries with that id
-    for (const [s, pid] of lobby.playersSockets.entries()) {
-      if (pid === id) lobby.playersSockets.delete(s);
+  socket.on('submitRound', ({ code, payload }) => {
+    // payload: { slotIndex, data } where slotIndex is the slot being acted on
+    const room = rooms[code];
+    if (!room || room.state !== 'playing') return;
+    const r = room.round;
+    const slotIndex = payload.slotIndex;
+    if (slotIndex == null || slotIndex < 0 || slotIndex >= room.players.length) return;
+    // store in submissions[r][slotIndex]
+    room.submissions[r][slotIndex] = payload.data; // either dataURL or text
+    // check if round complete (all slots have submission for round r)
+    const allDone = room.submissions[r].every(x => x !== null);
+    if (allDone) {
+      // advance
+      room.round++;
+      if (room.round >= room.nRounds) {
+        room.state = 'reveal';
+        // send reveal
+        sendReveal(code);
+        updateRoomPlayers(code);
+      } else {
+        distributeRound(code);
+        updateRoomPlayers(code);
+      }
+    } else {
+      updateRoomPlayers(code);
     }
-    if (lobby.hostId === id) lobby.hostId = lobby.playerOrder.length ? lobby.playerOrder[0] : null;
-    sendPlayersUpdate(lobby);
+  });
 
-    if (lobby.playerOrder.length === 0) {
-      clearTimeout(lobby.phaseTimer);
-      delete lobbies[lobbyCode];
-      console.log(`Lobby ${lobbyCode} removed (empty)`);
+  socket.on('disconnect', () => {
+    console.log('disconnect', socket.id);
+    // remove player from any rooms
+    for (const code of Object.keys(rooms)) {
+      if (leaveRoom(socket.id, code)) {
+        io.emit('lobbyList', publicRoomList());
+      }
     }
-
-    wsClients.delete(ws);
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+// helper: update player lists to room
+function updateRoomPlayers(code) {
+  const room = rooms[code];
+  if (!room) return;
+  const lightPlayers = room.players.map(p => ({ id: p.id, name: p.name, ready: !!p.ready }));
+  io.to(code).emit('roomUpdate', {
+    players: lightPlayers,
+    hostId: room.hostId,
+    state: room.state,
+    round: room.round,
+    nRounds: room.nRounds
+  });
+}
+
+// helper: leave and cleanup
+function leaveRoom(socketId, code) {
+  const room = rooms[code];
+  if (!room) return false;
+  const idx = room.players.findIndex(p => p.id === socketId);
+  if (idx !== -1) {
+    room.players.splice(idx, 1);
+    io.to(code).emit('systemMsg', 'A player left');
+    // if host left, pick new host
+    if (room.hostId === socketId) {
+      room.hostId = room.players.length ? room.players[0].id : null;
+    }
+    // if no players left, delete
+    if (room.players.length === 0) {
+      delete rooms[code];
+    } else {
+      updateRoomPlayers(code);
+    }
+    return true;
+  }
+  return false;
+}
+
+// main algorithm: distribute content for current round to each player
+function distributeRound(code) {
+  const room = rooms[code];
+  if (!room) return;
+  const r = room.round;
+  const n = room.players.length;
+  // For each player p, compute the slotIndex they act on this round:
+  // slotIndex = (pIndex - r + n) % n
+  // If r==0 then p acts on their own slot -> initial prompt
+  room.players.forEach((p, pIndex) => {
+    const slotIndex = ((pIndex - r) % n + n) % n;
+    let content;
+    if (r === 0) {
+      content = { type: 'prompt', data: room.slotPrompts[slotIndex] };
+    } else {
+      // they act on submissions from previous round for that slot
+      const prev = room.submissions[r-1][slotIndex];
+      const prevType = (r-1) % 2 === 0 ? 'image' : 'text';
+      content = { type: prevType, data: prev };
+    }
+    // Determine whether this round expects drawing or text:
+    const expecting = (r % 2 === 0) ? 'draw' : 'write';
+    // Tell the socket
+    io.to(p.id).emit('roundStart', {
+      round: r,
+      nRounds: n,
+      expecting,
+      slotIndex,
+      content
+    });
+  });
+}
+
+// reveal: build chains for each slot (starting owner)
+function sendReveal(code) {
+  const room = rooms[code];
+  if (!room) return;
+  const n = room.players.length;
+  const chains = [];
+  for (let slot = 0; slot < n; slot++) {
+    const chain = [];
+    chain.push({ type: 'prompt', data: room.slotPrompts[slot] });
+    for (let r = 0; r < n; r++) {
+      const item = room.submissions[r][slot];
+      const type = r % 2 === 0 ? 'image' : 'text';
+      chain.push({ type, data: item });
+    }
+    chains.push({ slot, owner: room.players[slot] ? room.players[slot].name : 'Player', chain });
+  }
+  io.to(code).emit('reveal', { chains });
+}
+
+server.listen(PORT, () => {
+  console.log(`Server listening on ${PORT}`);
+});
