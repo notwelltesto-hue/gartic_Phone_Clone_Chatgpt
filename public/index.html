@@ -2,70 +2,108 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Gartic Clone</title>
+  <title>Gartic Clone — Big Canvas</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app">
-    <!-- Home / Lobby selection -->
-    <div id="home" class="screen">
+    <header>
       <h1>Gartic Clone</h1>
-      <div class="card">
-        <input id="nameInput" placeholder="Your name" />
-        <label><input id="publicCheck" type="checkbox" /> Make public</label>
-        <button id="createBtn">Create Lobby</button>
+      <div class="header-controls">
+        <label><input id="publicCheckTop" type="checkbox" /> Public</label>
+        <input id="nameInputTop" placeholder="Your name" />
+        <button id="createBtnTop">Create</button>
+        <input id="codeInputTop" placeholder="Join code" />
+        <button id="joinBtnTop">Join</button>
       </div>
+    </header>
 
-      <div class="card">
-        <input id="codeInput" placeholder="Join code" />
-        <button id="joinBtn">Join Lobby</button>
-      </div>
+    <main>
+      <section id="home" class="screen">
+        <div class="card">
+          <h3>Public Lobbies</h3>
+          <div id="lobbiesList">Loading...</div>
+          <button id="refreshLobbies">Refresh</button>
+        </div>
 
-      <div class="card">
-        <h3>Public lobbies</h3>
-        <div id="lobbiesList">Loading...</div>
-        <button id="refreshLobbies">Refresh</button>
-      </div>
-    </div>
+        <div class="card">
+          <h3>TTS & Audio</h3>
+          <label><input type="checkbox" id="ttsCheck" /> Enable TTS</label>
+          <button id="enableTTS">Enable / Test TTS</button>
+          <select id="voiceSelect"></select>
+        </div>
 
-    <!-- Lobby -->
-    <div id="lobby" class="screen hidden">
-      <h2>Lobby <span id="lobbyCode"></span></h2>
-      <div id="players"></div>
-      <div>
-        <button id="readyBtn">Ready</button>
-        <button id="leaveBtn">Leave</button>
-        <button id="startBtn" class="hidden">Start Game</button>
-      </div>
-      <div id="systemMsg" class="muted"></div>
-    </div>
+        <div class="card">
+          <h3>Quick Settings</h3>
+          <label>Default Brush Size: <input id="brushDefault" type="range" min="1" max="32" value="4" /></label>
+        </div>
+      </section>
 
-    <!-- Prompt entry (initial) -->
-    <div id="promptEntry" class="screen hidden">
-      <h2>Enter a prompt</h2>
-      <input id="initialPrompt" placeholder="A funny scene..." />
-      <button id="submitPrompt">Submit Prompt</button>
-    </div>
+      <section id="lobby" class="screen hidden">
+        <div class="card">
+          <h2>Lobby <span id="lobbyCode"></span></h2>
+          <div id="players"></div>
+          <div class="lobby-controls">
+            <button id="readyBtn">Ready</button>
+            <button id="leaveBtn">Leave</button>
+            <button id="startBtn" class="hidden">Start Game</button>
+          </div>
+          <div id="systemMsg" class="muted"></div>
+        </div>
+      </section>
 
-    <!-- Game screen -->
-    <div id="game" class="screen hidden">
-      <h2 id="phaseTitle">Round</h2>
-      <div id="phaseContent"></div>
-      <div id="timer">--</div>
-      <div id="drawTools" class="hidden">
-        <button id="clearBtn">Clear</button>
-        <button id="undoBtn">Undo</button>
-      </div>
-      <div id="actionArea"></div>
-    </div>
+      <section id="promptEntry" class="screen hidden">
+        <div class="card">
+          <h2>Enter a prompt</h2>
+          <input id="initialPrompt" placeholder="A funny scene..." />
+          <button id="submitPrompt">Submit Prompt</button>
+        </div>
+      </section>
 
-    <!-- Reveal -->
-    <div id="reveal" class="screen hidden">
-      <h2>Results</h2>
-      <div id="chains"></div>
-      <button id="backHome">Back to Home</button>
-    </div>
+      <section id="game" class="screen hidden">
+        <div class="card game-top">
+          <div>
+            <h2 id="phaseTitle">Round</h2>
+            <div id="phaseContent"></div>
+          </div>
+          <div class="tools">
+            <div>
+              <label>Brush size <input id="brushSize" type="range" min="1" max="40" value="4" /></label>
+            </div>
+            <div id="palette"></div>
+            <div>
+              <button id="clearBtn">Clear</button>
+              <button id="undoBtn">Undo</button>
+              <button id="eraserBtn">Eraser</button>
+            </div>
+            <div>
+              <div id="timer">--</div>
+              <button id="submitNow">Submit</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div id="actionArea" class="canvasWrap"></div>
+        </div>
+
+        <div class="card">
+          <h3>Round thumbnails</h3>
+          <div id="thumbs" class="thumbsRow"></div>
+        </div>
+      </section>
+
+      <section id="reveal" class="screen hidden">
+        <div class="card">
+          <h2>Reveal</h2>
+          <div id="chains"></div>
+        </div>
+        <div class="card">
+          <button id="backHome">Back to Home</button>
+        </div>
+      </section>
+    </main>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
