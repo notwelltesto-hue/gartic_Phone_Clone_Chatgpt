@@ -9,74 +9,70 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- Game state ---
+// Game state
 const players = {}; // id -> name
-let playerOrder = []; // array of ids in join order
+let playerOrder = [];
+const chain = []; // entries: { type: 'text', content } or { type: 'drawing', commands, brush }
 
-// Chain stores text or drawing data in turns, alternating:
-// { type: 'text', content: '...' }
-// { type: 'drawing', commands: [...], brush: { color, size } }
-const chain = [];
+let phaseIndex = -1; // which turn, cycles 0..playerOrder.length*2-1
+let phaseTimer = null;
+const PHASE_DURATION = 30000;
 
-let phase = 0; // counts turns: 0 = player 0 text, 1 = player 1 draw, 2 = player 2 text, 3 = player 3 draw, etc
-let roundTimer = null;
-const ROUND_TIME = 30000;
-
-function broadcast(obj) {
-  const msg = JSON.stringify(obj);
-  for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
-    }
-  }
+function broadcast(data) {
+  const msg = JSON.stringify(data);
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) client.send(msg);
+  });
 }
 
-function broadcastPlayers() {
-  broadcast({ t: 'players', players, order: playerOrder });
+function sendPlayersUpdate() {
+  broadcast({ t: 'playersUpdate', players, order: playerOrder });
 }
 
-function broadcastChain() {
+function sendChainUpdate() {
   broadcast({ t: 'chainUpdate', chain });
 }
 
-function currentPlayerId() {
+function getCurrentPlayerId() {
   if (playerOrder.length === 0) return null;
-  return playerOrder[phase % playerOrder.length];
+  return playerOrder[phaseIndex % playerOrder.length];
 }
 
-function currentPhaseType() {
-  return phase % 2 === 0 ? 'text' : 'drawing';
+function getCurrentInputType() {
+  // Even phases = text, odd phases = drawing
+  return phaseIndex % 2 === 0 ? 'text' : 'drawing';
 }
 
 function startNextPhase() {
-  phase++;
-  if (phase >= playerOrder.length * 2) {
-    // Game over — reset or loop
-    phase = 0;
-    chain.length = 0; // clear chain for new game
+  if (playerOrder.length === 0) return;
+
+  phaseIndex++;
+  if (phaseIndex >= playerOrder.length * 2) {
+    // Game over, restart
+    phaseIndex = 0;
+    chain.length = 0;
+    console.log('Game restarted');
   }
 
-  const currId = currentPlayerId();
-  const currType = currentPhaseType();
+  const playerId = getCurrentPlayerId();
+  const inputType = getCurrentInputType();
 
   broadcast({
     t: 'phaseStart',
-    playerId: currId,
-    inputType: currType,
-    phase,
+    playerId,
+    inputType,
+    phaseIndex,
   });
-  broadcastChain();
+  sendChainUpdate();
 
-  console.log(`Phase ${phase} started: player ${currId} (${currType})`);
+  console.log(`Phase ${phaseIndex + 1} started. Player ${playerId} to ${inputType}`);
 
-  clearTimeout(roundTimer);
-  roundTimer = setTimeout(() => {
-    // If player didn't send input, advance anyway
+  clearTimeout(phaseTimer);
+  phaseTimer = setTimeout(() => {
+    // Advance if no input received on time
     startNextPhase();
-  }, ROUND_TIME);
+  }, PHASE_DURATION);
 }
-
-// --- WS connection ---
 
 wss.on('connection', (ws) => {
   let clientId = null;
@@ -89,64 +85,72 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    if (data.t === 'meta') {
+    if (data.t === 'join') {
       clientId = data.id;
       players[clientId] = data.name || 'anon';
-      if (!playerOrder.includes(clientId)) {
-        playerOrder.push(clientId);
-      }
-      broadcastPlayers();
 
-      // On first player connecting, start the game if not started
-      if (phase === 0 && playerOrder.length === 1) {
+      if (!playerOrder.includes(clientId)) playerOrder.push(clientId);
+
+      sendPlayersUpdate();
+
+      if (phaseIndex === -1 && playerOrder.length >= 2) {
+        phaseIndex = -1; // reset
         startNextPhase();
       }
       return;
     }
 
-    // Accept input only from current player and matching phase type
-    if (data.t === 'input' && data.id === currentPlayerId()) {
-      if (data.type === currentPhaseType()) {
-        if (data.type === 'text' && typeof data.content === 'string') {
-          chain[phase] = { type: 'text', content: data.content };
-          startNextPhase();
-        }
-        else if (data.type === 'drawing' && Array.isArray(data.commands) && data.brush) {
-          chain[phase] = { type: 'drawing', commands: data.commands, brush: data.brush };
-          startNextPhase();
-        }
+    if (data.t === 'input') {
+      if (data.id !== getCurrentPlayerId()) {
+        // Not this player's turn
+        return;
+      }
+
+      if (data.type !== getCurrentInputType()) return;
+
+      if (data.type === 'text' && typeof data.content === 'string') {
+        chain[phaseIndex] = { type: 'text', content: data.content };
+        startNextPhase();
+      } else if (data.type === 'drawing' && Array.isArray(data.commands) && data.brush) {
+        chain[phaseIndex] = {
+          type: 'drawing',
+          commands: data.commands,
+          brush: data.brush,
+        };
+        startNextPhase();
       }
     }
   });
 
   ws.on('close', () => {
-    if (clientId) {
-      delete players[clientId];
-      const idx = playerOrder.indexOf(clientId);
-      if (idx !== -1) playerOrder.splice(idx, 1);
-      broadcastPlayers();
+    if (!clientId) return;
 
-      // Reset game if no players left
-      if (playerOrder.length === 0) {
-        phase = 0;
-        chain.length = 0;
-        clearTimeout(roundTimer);
-      }
+    delete players[clientId];
+    playerOrder = playerOrder.filter(id => id !== clientId);
+
+    sendPlayersUpdate();
+
+    if (playerOrder.length === 0) {
+      phaseIndex = -1;
+      chain.length = 0;
+      clearTimeout(phaseTimer);
     }
   });
 
-  // Send initial players and chain state on connect
-  ws.send(JSON.stringify({ t: 'players', players, order: playerOrder }));
+  // Send current state to new clients
+  ws.send(JSON.stringify({ t: 'playersUpdate', players, order: playerOrder }));
   ws.send(JSON.stringify({ t: 'chainUpdate', chain }));
-  ws.send(JSON.stringify({
-    t: 'phaseStart',
-    playerId: currentPlayerId(),
-    inputType: currentPhaseType(),
-    phase,
-  }));
+  if (phaseIndex >= 0) {
+    ws.send(JSON.stringify({
+      t: 'phaseStart',
+      playerId: getCurrentPlayerId(),
+      inputType: getCurrentInputType(),
+      phaseIndex,
+    }));
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`Server running at http://localhost:${PORT}`);
 });
