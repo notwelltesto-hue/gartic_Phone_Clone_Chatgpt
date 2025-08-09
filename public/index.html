@@ -113,15 +113,22 @@
 
   ws.addEventListener('message', (ev) => {
     let msg;
-    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    try {
+      msg = JSON.parse(ev.data);
+    } catch (e) {
+      return;
+    }
 
     if (msg.t === 'players') {
       playersEl.textContent = Object.values(msg.players).join('\n');
       return;
     }
 
+    // Ignore your own drawing messages to avoid duplicate lines
+    if (msg.id === clientId) return;
+
     if (msg.t === 'clear') {
-      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       return;
     }
 
