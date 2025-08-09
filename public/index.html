@@ -1,101 +1,100 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gartic Phone Clone</title>
-  <style>
-    body {
-      font-family: system-ui,Segoe UI,Roboto,Arial;
-      display: flex;
-      gap: 12px;
-      padding: 12px;
-    }
-    #ui {
-      width: 320px;
-      max-height: 600px;
-      overflow-y: auto;
-    }
-    #players {
-      border: 1px solid #ddd;
-      padding: 6px;
-      white-space: pre-line;
-      max-height: 100px;
-      overflow-y: auto;
-      margin-bottom: 12px;
-    }
-    #chain {
-      border: 1px solid #ccc;
-      padding: 6px;
-      max-height: 400px;
-      overflow-y: auto;
-    }
-    .chain-entry {
-      border-bottom: 1px solid #eee;
-      padding: 6px 0;
-    }
-    canvas.chain-canvas {
-      border: 1px solid #aaa;
-      display: block;
-      margin: 6px 0;
-      width: 300px;
-      height: 200px;
-      touch-action: none;
-    }
-    #inputSection {
-      margin-top: 12px;
-    }
-    #inputText {
-      width: 100%;
-      font-size: 1rem;
-      padding: 6px;
-      box-sizing: border-box;
-    }
-    #inputCanvas {
-      border: 1px solid #444;
-      width: 300px;
-      height: 200px;
-      touch-action: none;
-      display: none;
-    }
-    #submitBtn {
-      margin-top: 8px;
-      padding: 8px 12px;
-      font-size: 1rem;
-    }
-    #status {
-      margin-top: 8px;
-      font-weight: bold;
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gartic Phone Improved</title>
+<style>
+  body {
+    font-family: system-ui,Segoe UI,Roboto,Arial;
+    display: flex;
+    padding: 12px;
+    gap: 12px;
+  }
+  #ui {
+    width: 320px;
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  #players {
+    border: 1px solid #ddd;
+    padding: 6px;
+    white-space: pre-line;
+    max-height: 100px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+  }
+  #chain {
+    border: 1px solid #ccc;
+    padding: 6px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .chain-entry {
+    border-bottom: 1px solid #eee;
+    padding: 6px 0;
+  }
+  canvas.chain-canvas {
+    border: 1px solid #aaa;
+    display: block;
+    margin: 6px 0;
+    width: 300px;
+    height: 200px;
+    touch-action: none;
+  }
+  #inputSection {
+    margin-top: 12px;
+  }
+  #inputText {
+    width: 100%;
+    font-size: 1rem;
+    padding: 6px;
+    box-sizing: border-box;
+  }
+  #inputCanvas {
+    border: 1px solid #444;
+    width: 300px;
+    height: 200px;
+    touch-action: none;
+    display: none;
+  }
+  #submitBtn {
+    margin-top: 8px;
+    padding: 8px 12px;
+    font-size: 1rem;
+  }
+  #status {
+    margin-top: 8px;
+    font-weight: bold;
+  }
+</style>
 </head>
 <body>
-  <div id="ui">
-    <h3>Gartic Phone Clone</h3>
+<div id="ui">
+  <h3>Gartic Phone Improved</h3>
 
-    <label>Username: <input id="name" placeholder="player123" /></label>
+  <label>Username: <input id="name" placeholder="player123" /></label>
 
-    <div id="players">(no players yet)</div>
+  <div id="players">(no players yet)</div>
 
-    <div>
-      <strong>Current phase info:</strong>
-      <div id="phaseInfo">Loading...</div>
-    </div>
-
-    <div id="chain"></div>
-
-    <div id="inputSection">
-      <textarea id="inputText" rows="3" placeholder="Type your prompt or description"></textarea>
-      <canvas id="inputCanvas" width="300" height="200"></canvas>
-      <br/>
-      <button id="submitBtn">Submit</button>
-      <div id="status"></div>
-    </div>
+  <div>
+    <strong>Current phase:</strong>
+    <div id="phaseInfo">Waiting for players...</div>
   </div>
 
+  <div id="chain"></div>
+
+  <div id="inputSection">
+    <textarea id="inputText" rows="3" placeholder="Type your prompt or description"></textarea>
+    <canvas id="inputCanvas" width="300" height="200"></canvas>
+    <br/>
+    <button id="submitBtn" disabled>Submit</button>
+    <div id="status"></div>
+  </div>
+</div>
+
 <script>
-  // --- Setup ---
-  const wsProtocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+  const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
   const ws = new WebSocket(wsProtocol + location.host);
 
   const clientId = Math.random().toString(36).slice(2,9);
@@ -108,13 +107,13 @@
   const submitBtn = document.getElementById('submitBtn');
   const statusEl = document.getElementById('status');
 
-  // Drawing setup on inputCanvas
+  // Drawing setup
   const ctx = inputCanvas.getContext('2d');
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
   let drawing = false;
-  let brush = { color: '#000000', size: 3 };
+  let brush = { color: '#000', size: 3 };
   let drawCommands = [];
 
   function toCanvasPos(e) {
@@ -146,37 +145,36 @@
   }
 
   inputCanvas.addEventListener('pointerdown', e => {
-    if (!canDraw) return;
+    if (!canInput) return;
     const pt = toCanvasPos(e);
     beginStroke(pt);
     e.preventDefault();
   });
 
   inputCanvas.addEventListener('pointermove', e => {
-    if (!drawing || !canDraw) return;
+    if (!drawing || !canInput) return;
     const pt = toCanvasPos(e);
     strokeTo(pt);
     e.preventDefault();
   });
 
   window.addEventListener('pointerup', e => {
-    if (drawing && canDraw) endStroke();
+    if (drawing && canInput) endStroke();
   });
 
-  // --- State ---
+  // State
   let players = {};
   let playerOrder = [];
   let chain = [];
-  let currentPhase = 0;
+  let currentPhase = -1;
   let currentPlayerId = null;
-  let currentInputType = null; // 'text' or 'drawing'
-  let canDraw = false;
+  let currentInputType = null;
+  let canInput = false;
 
-  // --- Functions ---
-
+  // Render chain history
   function renderChain() {
     chainEl.innerHTML = '';
-    chain.forEach((entry, i) => {
+    chain.forEach((entry, idx) => {
       const div = document.createElement('div');
       div.className = 'chain-entry';
 
@@ -208,15 +206,17 @@
     });
   }
 
+  // Reset inputs
   function resetInput() {
     inputText.value = '';
     drawCommands = [];
     ctx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
   }
 
-  function enableInput(type, isCurrentPlayer) {
+  // Enable/disable inputs based on phase and player turn
+  function setInput(type, isCurrentPlayer) {
     currentInputType = type;
-    canDraw = isCurrentPlayer;
+    canInput = isCurrentPlayer;
 
     if (type === 'text') {
       inputText.style.display = 'block';
@@ -225,18 +225,22 @@
     } else if (type === 'drawing') {
       inputText.style.display = 'none';
       inputCanvas.style.display = 'block';
+    } else {
+      inputText.style.display = 'none';
+      inputCanvas.style.display = 'none';
     }
 
     submitBtn.disabled = !isCurrentPlayer;
     resetInput();
 
     if (isCurrentPlayer) {
-      statusEl.textContent = `Your turn to ${type === 'text' ? 'write' : 'draw'}.`;
+      statusEl.textContent = `Your turn to ${type === 'text' ? 'write' : 'draw'}`;
     } else {
       statusEl.textContent = `Waiting for other player to ${type === 'text' ? 'write' : 'draw'}...`;
     }
   }
 
+  // Text to Speech announce turn
   function announce(text) {
     if ('speechSynthesis' in window) {
       speechSynthesis.cancel();
@@ -246,7 +250,7 @@
   }
 
   submitBtn.addEventListener('click', () => {
-    if (!canDraw) return;
+    if (!canInput) return;
 
     if (currentInputType === 'text') {
       const content = inputText.value.trim();
@@ -260,7 +264,7 @@
         type: 'text',
         content,
       }));
-      enableInput(null, false);
+      setInput(null, false);
     } else if (currentInputType === 'drawing') {
       if (drawCommands.length === 0) {
         alert('Please draw something');
@@ -273,21 +277,20 @@
         commands: drawCommands,
         brush,
       }));
-      enableInput(null, false);
+      setInput(null, false);
     }
   });
 
-  // --- WebSocket events ---
-
+  // WebSocket events
   ws.addEventListener('open', () => {
-    ws.send(JSON.stringify({ t: 'meta', id: clientId, name: nameInput.value || 'anon' }));
+    ws.send(JSON.stringify({ t: 'join', id: clientId, name: nameInput.value || 'anon' }));
   });
 
   nameInput.addEventListener('change', () => {
-    ws.send(JSON.stringify({ t: 'meta', id: clientId, name: nameInput.value || 'anon' }));
+    ws.send(JSON.stringify({ t: 'join', id: clientId, name: nameInput.value || 'anon' }));
   });
 
-  ws.addEventListener('message', ev => {
+  ws.addEventListener('message', (ev) => {
     let msg;
     try {
       msg = JSON.parse(ev.data);
@@ -295,7 +298,7 @@
       return;
     }
 
-    if (msg.t === 'players') {
+    if (msg.t === 'playersUpdate') {
       players = msg.players || {};
       playerOrder = msg.order || [];
       playersEl.textContent = playerOrder.map(id => players[id] || id).join('\n');
@@ -309,14 +312,14 @@
     }
 
     if (msg.t === 'phaseStart') {
-      currentPhase = msg.phase;
+      currentPhase = msg.phaseIndex;
       currentPlayerId = msg.playerId;
       currentInputType = msg.inputType;
 
-      const currName = players[currentPlayerId] || currentPlayerId || 'Unknown';
-      phaseInfoEl.textContent = `Phase ${currentPhase + 1}: ${currName} to ${currentInputType === 'text' ? 'write' : 'draw'}`;
+      const currentPlayerName = players[currentPlayerId] || 'Unknown';
+      phaseInfoEl.textContent = `Phase ${currentPhase + 1}: ${currentPlayerName} to ${currentInputType === 'text' ? 'write' : 'draw'}`;
 
-      enableInput(currentInputType, clientId === currentPlayerId);
+      setInput(currentInputType, clientId === currentPlayerId);
 
       if (clientId === currentPlayerId) {
         announce(`Your turn to ${currentInputType === 'text' ? 'write' : 'draw'}`);
