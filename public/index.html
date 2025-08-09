@@ -1,333 +1,328 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" >
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Gartic Phone Improved</title>
-<style>
-  body {
-    font-family: system-ui,Segoe UI,Roboto,Arial;
-    display: flex;
-    padding: 12px;
-    gap: 12px;
-  }
-  #ui {
-    width: 320px;
-    max-height: 600px;
-    overflow-y: auto;
-  }
-  #players {
-    border: 1px solid #ddd;
-    padding: 6px;
-    white-space: pre-line;
-    max-height: 100px;
-    overflow-y: auto;
-    margin-bottom: 12px;
-  }
-  #chain {
-    border: 1px solid #ccc;
-    padding: 6px;
-    max-height: 400px;
-    overflow-y: auto;
-  }
-  .chain-entry {
-    border-bottom: 1px solid #eee;
-    padding: 6px 0;
-  }
-  canvas.chain-canvas {
-    border: 1px solid #aaa;
-    display: block;
-    margin: 6px 0;
-    width: 300px;
-    height: 200px;
-    touch-action: none;
-  }
-  #inputSection {
-    margin-top: 12px;
-  }
-  #inputText {
-    width: 100%;
-    font-size: 1rem;
-    padding: 6px;
-    box-sizing: border-box;
-  }
-  #inputCanvas {
-    border: 1px solid #444;
-    width: 300px;
-    height: 200px;
-    touch-action: none;
-    display: none;
-  }
-  #submitBtn {
-    margin-top: 8px;
-    padding: 8px 12px;
-    font-size: 1rem;
-  }
-  #status {
-    margin-top: 8px;
-    font-weight: bold;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gartic Phone - Secret Phases Prototype</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<div id="ui">
-  <h3>Gartic Phone Improved</h3>
+  <div id="container">
+    <h1>Gartic Phone</h1>
+    <label for="name">Enter your name:</label>
+    <input
+      type="text"
+      id="name"
+      placeholder="Your name here..."
+      maxlength="20"
+      autocomplete="off"
+      spellcheck="false"
+    />
 
-  <label>Username: <input id="name" placeholder="player123" /></label>
+    <div id="players">(Waiting for players...)</div>
 
-  <div id="players">(no players yet)</div>
+    <div id="phaseInfo">Waiting for enough players...</div>
+    <div id="timer"></div>
 
-  <div>
-    <strong>Current phase:</strong>
-    <div id="phaseInfo">Waiting for players...</div>
+    <div id="inputSection">
+      <textarea
+        id="inputText"
+        placeholder="Type your prompt or description here..."
+      ></textarea>
+      <canvas id="inputCanvas" width="320" height="220"></canvas>
+      <button id="submitBtn" disabled>Submit</button>
+      <div id="status"></div>
+    </div>
+
+    <div id="chain"></div>
   </div>
 
-  <div id="chain"></div>
+  <script>
+    (() => {
+      const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+      const ws = new WebSocket(wsProtocol + location.host);
 
-  <div id="inputSection">
-    <textarea id="inputText" rows="3" placeholder="Type your prompt or description"></textarea>
-    <canvas id="inputCanvas" width="300" height="200"></canvas>
-    <br/>
-    <button id="submitBtn" disabled>Submit</button>
-    <div id="status"></div>
-  </div>
-</div>
+      // Elements
+      const nameInput = document.getElementById('name');
+      const playersEl = document.getElementById('players');
+      const phaseInfoEl = document.getElementById('phaseInfo');
+      const timerEl = document.getElementById('timer');
+      const inputText = document.getElementById('inputText');
+      const inputCanvas = document.getElementById('inputCanvas');
+      const submitBtn = document.getElementById('submitBtn');
+      const statusEl = document.getElementById('status');
+      const chainEl = document.getElementById('chain');
 
-<script>
-  const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const ws = new WebSocket(wsProtocol + location.host);
+      // Client state
+      const clientId = Math.random().toString(36).slice(2, 9);
+      let players = {};
+      let playerOrder = [];
+      let chain = [];
+      let currentPhase = -1;
+      let currentPlayerId = null;
+      let currentInputType = null;
+      let canInput = false;
 
-  const clientId = Math.random().toString(36).slice(2,9);
-  const nameInput = document.getElementById('name');
-  const playersEl = document.getElementById('players');
-  const phaseInfoEl = document.getElementById('phaseInfo');
-  const chainEl = document.getElementById('chain');
-  const inputText = document.getElementById('inputText');
-  const inputCanvas = document.getElementById('inputCanvas');
-  const submitBtn = document.getElementById('submitBtn');
-  const statusEl = document.getElementById('status');
+      // Drawing setup
+      const ctx = inputCanvas.getContext('2d');
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#f5a623';
+      ctx.lineWidth = 3;
 
-  // Drawing setup
-  const ctx = inputCanvas.getContext('2d');
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+      let drawing = false;
+      let drawCommands = [];
 
-  let drawing = false;
-  let brush = { color: '#000', size: 3 };
-  let drawCommands = [];
+      // Utility for mouse/touch position
+      function toCanvasPos(e) {
+        const rect = inputCanvas.getBoundingClientRect();
+        const scaleX = inputCanvas.width / rect.width;
+        const scaleY = inputCanvas.height / rect.height;
+        const x =
+          ((e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left) * scaleX;
+        const y =
+          ((e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top) * scaleY;
+        return { x, y };
+      }
 
-  function toCanvasPos(e) {
-    const rect = inputCanvas.getBoundingClientRect();
-    const scaleX = inputCanvas.width / rect.width;
-    const scaleY = inputCanvas.height / rect.height;
-    const x = ((e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left) * scaleX;
-    const y = ((e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top) * scaleY;
-    return { x, y };
-  }
-
-  function beginStroke(pt) {
-    drawing = true;
-    drawCommands.push({ x: pt.x, y: pt.y, type: 'begin' });
-    ctx.beginPath();
-    ctx.moveTo(pt.x, pt.y);
-  }
-
-  function strokeTo(pt) {
-    drawCommands.push({ x: pt.x, y: pt.y, type: 'stroke' });
-    ctx.lineTo(pt.x, pt.y);
-    ctx.stroke();
-  }
-
-  function endStroke() {
-    drawing = false;
-    drawCommands.push({ type: 'end' });
-    ctx.closePath();
-  }
-
-  inputCanvas.addEventListener('pointerdown', e => {
-    if (!canInput) return;
-    const pt = toCanvasPos(e);
-    beginStroke(pt);
-    e.preventDefault();
-  });
-
-  inputCanvas.addEventListener('pointermove', e => {
-    if (!drawing || !canInput) return;
-    const pt = toCanvasPos(e);
-    strokeTo(pt);
-    e.preventDefault();
-  });
-
-  window.addEventListener('pointerup', e => {
-    if (drawing && canInput) endStroke();
-  });
-
-  // State
-  let players = {};
-  let playerOrder = [];
-  let chain = [];
-  let currentPhase = -1;
-  let currentPlayerId = null;
-  let currentInputType = null;
-  let canInput = false;
-
-  // Render chain history
-  function renderChain() {
-    chainEl.innerHTML = '';
-    chain.forEach((entry, idx) => {
-      const div = document.createElement('div');
-      div.className = 'chain-entry';
-
-      if (entry.type === 'text') {
-        div.textContent = `Text: ${entry.content}`;
-      } else if (entry.type === 'drawing') {
-        const c = document.createElement('canvas');
-        c.className = 'chain-canvas';
-        c.width = 300;
-        c.height = 200;
-        div.appendChild(c);
-
-        const ctx = c.getContext('2d');
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.strokeStyle = entry.brush.color;
-        ctx.lineWidth = entry.brush.size;
-
+      function beginStroke(pt) {
+        drawing = true;
+        drawCommands.push({ x: pt.x, y: pt.y, type: 'begin' });
         ctx.beginPath();
-        entry.commands.forEach(cmd => {
-          if (cmd.type === 'begin') ctx.moveTo(cmd.x, cmd.y);
-          else if (cmd.type === 'stroke') ctx.lineTo(cmd.x, cmd.y);
-          else if (cmd.type === 'end') ctx.closePath();
-        });
+        ctx.moveTo(pt.x, pt.y);
+      }
+
+      function strokeTo(pt) {
+        drawCommands.push({ x: pt.x, y: pt.y, type: 'stroke' });
+        ctx.lineTo(pt.x, pt.y);
         ctx.stroke();
       }
 
-      chainEl.appendChild(div);
-    });
-  }
-
-  // Reset inputs
-  function resetInput() {
-    inputText.value = '';
-    drawCommands = [];
-    ctx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
-  }
-
-  // Enable/disable inputs based on phase and player turn
-  function setInput(type, isCurrentPlayer) {
-    currentInputType = type;
-    canInput = isCurrentPlayer;
-
-    if (type === 'text') {
-      inputText.style.display = 'block';
-      inputCanvas.style.display = 'none';
-      inputText.disabled = !isCurrentPlayer;
-    } else if (type === 'drawing') {
-      inputText.style.display = 'none';
-      inputCanvas.style.display = 'block';
-    } else {
-      inputText.style.display = 'none';
-      inputCanvas.style.display = 'none';
-    }
-
-    submitBtn.disabled = !isCurrentPlayer;
-    resetInput();
-
-    if (isCurrentPlayer) {
-      statusEl.textContent = `Your turn to ${type === 'text' ? 'write' : 'draw'}`;
-    } else {
-      statusEl.textContent = `Waiting for other player to ${type === 'text' ? 'write' : 'draw'}...`;
-    }
-  }
-
-  // Text to Speech announce turn
-  function announce(text) {
-    if ('speechSynthesis' in window) {
-      speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      speechSynthesis.speak(utterance);
-    }
-  }
-
-  submitBtn.addEventListener('click', () => {
-    if (!canInput) return;
-
-    if (currentInputType === 'text') {
-      const content = inputText.value.trim();
-      if (!content) {
-        alert('Please enter some text');
-        return;
+      function endStroke() {
+        drawing = false;
+        drawCommands.push({ type: 'end' });
+        ctx.closePath();
       }
-      ws.send(JSON.stringify({
-        t: 'input',
-        id: clientId,
-        type: 'text',
-        content,
-      }));
-      setInput(null, false);
-    } else if (currentInputType === 'drawing') {
-      if (drawCommands.length === 0) {
-        alert('Please draw something');
-        return;
+
+      // Input canvas event handlers
+      inputCanvas.addEventListener('pointerdown', (e) => {
+        if (!canInput) return;
+        beginStroke(toCanvasPos(e));
+        e.preventDefault();
+      });
+      inputCanvas.addEventListener('pointermove', (e) => {
+        if (!drawing || !canInput) return;
+        strokeTo(toCanvasPos(e));
+        e.preventDefault();
+      });
+      window.addEventListener('pointerup', (e) => {
+        if (drawing && canInput) endStroke();
+      });
+
+      // Render chain
+      function renderChain() {
+        chainEl.innerHTML = '';
+        chain.forEach((entry, idx) => {
+          const div = document.createElement('div');
+          div.className = 'chain-entry';
+
+          if (entry.type === 'text') {
+            div.innerHTML = `<div class="chain-text">${entry.content}</div>`;
+          } else if (entry.type === 'drawing') {
+            const c = document.createElement('canvas');
+            c.className = 'chain-canvas';
+            c.width = 320;
+            c.height = 220;
+            div.appendChild(c);
+
+            const ctx2 = c.getContext('2d');
+            ctx2.lineCap = 'round';
+            ctx2.lineJoin = 'round';
+            ctx2.strokeStyle = entry.brush.color;
+            ctx2.lineWidth = entry.brush.size;
+
+            ctx2.beginPath();
+            entry.commands.forEach((cmd) => {
+              if (cmd.type === 'begin') ctx2.moveTo(cmd.x, cmd.y);
+              else if (cmd.type === 'stroke') ctx2.lineTo(cmd.x, cmd.y);
+              else if (cmd.type === 'end') ctx2.closePath();
+            });
+            ctx2.stroke();
+          }
+
+          chainEl.appendChild(div);
+        });
       }
-      ws.send(JSON.stringify({
-        t: 'input',
-        id: clientId,
-        type: 'drawing',
-        commands: drawCommands,
-        brush,
-      }));
-      setInput(null, false);
-    }
-  });
 
-  // WebSocket events
-  ws.addEventListener('open', () => {
-    ws.send(JSON.stringify({ t: 'join', id: clientId, name: nameInput.value || 'anon' }));
-  });
-
-  nameInput.addEventListener('change', () => {
-    ws.send(JSON.stringify({ t: 'join', id: clientId, name: nameInput.value || 'anon' }));
-  });
-
-  ws.addEventListener('message', (ev) => {
-    let msg;
-    try {
-      msg = JSON.parse(ev.data);
-    } catch {
-      return;
-    }
-
-    if (msg.t === 'playersUpdate') {
-      players = msg.players || {};
-      playerOrder = msg.order || [];
-      playersEl.textContent = playerOrder.map(id => players[id] || id).join('\n');
-      return;
-    }
-
-    if (msg.t === 'chainUpdate') {
-      chain = msg.chain || [];
-      renderChain();
-      return;
-    }
-
-    if (msg.t === 'phaseStart') {
-      currentPhase = msg.phaseIndex;
-      currentPlayerId = msg.playerId;
-      currentInputType = msg.inputType;
-
-      const currentPlayerName = players[currentPlayerId] || 'Unknown';
-      phaseInfoEl.textContent = `Phase ${currentPhase + 1}: ${currentPlayerName} to ${currentInputType === 'text' ? 'write' : 'draw'}`;
-
-      setInput(currentInputType, clientId === currentPlayerId);
-
-      if (clientId === currentPlayerId) {
-        announce(`Your turn to ${currentInputType === 'text' ? 'write' : 'draw'}`);
+      function resetInput() {
+        inputText.value = '';
+        drawCommands = [];
+        ctx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
       }
-      return;
-    }
-  });
-</script>
+
+      function setInput(type, isCurrentPlayer) {
+        currentInputType = type;
+        canInput = isCurrentPlayer;
+
+        if (!isCurrentPlayer) {
+          // Hide inputs if not current player
+          inputText.style.display = 'none';
+          inputCanvas.style.display = 'none';
+          submitBtn.disabled = true;
+          statusEl.textContent = `Waiting for player "${
+            players[currentPlayerId] || 'Unknown'
+          }" to ${type === 'text' ? 'write' : 'draw'}...`;
+          return;
+        }
+
+        // Show only the relevant input
+        if (type === 'text') {
+          inputText.style.display = 'block';
+          inputCanvas.style.display = 'none';
+          inputText.disabled = false;
+          inputText.focus();
+        } else if (type === 'drawing') {
+          inputText.style.display = 'none';
+          inputCanvas.style.display = 'block';
+        }
+
+        submitBtn.disabled = false;
+        resetInput();
+
+        statusEl.textContent = `Your turn to ${
+          type === 'text' ? 'write a prompt' : 'draw the prompt'
+        }.`;
+      }
+
+      // Countdown timer display
+      let timerInterval = null;
+      let phaseEndTime = 0;
+      function startTimer() {
+        clearInterval(timerInterval);
+        phaseEndTime = Date.now() + 30000;
+        timerEl.textContent = 'Time left: 30s';
+
+        timerInterval = setInterval(() => {
+          const diff = Math.max(0, phaseEndTime - Date.now());
+          const seconds = Math.ceil(diff / 1000);
+          timerEl.textContent = `Time left: ${seconds}s`;
+          if (diff <= 0) clearInterval(timerInterval);
+        }, 200);
+      }
+
+      function stopTimer() {
+        clearInterval(timerInterval);
+        timerEl.textContent = '';
+      }
+
+      // Text-to-speech
+      function announce(text) {
+        if ('speechSynthesis' in window) {
+          speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          speechSynthesis.speak(utterance);
+        }
+      }
+
+      submitBtn.addEventListener('click', () => {
+        if (!canInput) return;
+
+        if (currentInputType === 'text') {
+          const content = inputText.value.trim();
+          if (!content) {
+            alert('Please enter some text');
+            return;
+          }
+          ws.send(
+            JSON.stringify({
+              t: 'input',
+              id: clientId,
+              type: 'text',
+              content,
+            }),
+          );
+          setInput(null, false);
+          stopTimer();
+        } else if (currentInputType === 'drawing') {
+          if (drawCommands.length === 0) {
+            alert('Please draw something');
+            return;
+          }
+          ws.send(
+            JSON.stringify({
+              t: 'input',
+              id: clientId,
+              type: 'drawing',
+              commands: drawCommands,
+              brush: { color: ctx.strokeStyle, size: ctx.lineWidth },
+            }),
+          );
+          setInput(null, false);
+          stopTimer();
+        }
+      });
+
+      nameInput.addEventListener('change', () => {
+        ws.send(
+          JSON.stringify({ t: 'join', id: clientId, name: nameInput.value || '' }),
+        );
+      });
+
+      ws.addEventListener('open', () => {
+        ws.send(JSON.stringify({ t: 'join', id: clientId, name: nameInput.value || '' }));
+      });
+
+      ws.addEventListener('message', (ev) => {
+        let msg;
+        try {
+          msg = JSON.parse(ev.data);
+        } catch {
+          return;
+        }
+
+        if (msg.t === 'playersUpdate') {
+          players = msg.players || {};
+          playerOrder = msg.order || [];
+
+          if (playerOrder.length === 0) {
+            playersEl.textContent = '(Waiting for players...)';
+          } else {
+            playersEl.innerHTML = playerOrder
+              .map((id) => {
+                const cls = id === currentPlayerId ? 'player-name player-current' : 'player-name';
+                return `<div class="${cls}">${players[id] || id}</div>`;
+              })
+              .join('');
+          }
+          return;
+        }
+
+        if (msg.t === 'chainUpdate') {
+          chain = msg.chain || [];
+          renderChain();
+          return;
+        }
+
+        if (msg.t === 'phaseStart') {
+          currentPhase = msg.phaseIndex;
+          currentPlayerId = msg.playerId;
+          currentInputType = msg.inputType;
+
+          const currentPlayerName = players[currentPlayerId] || 'Unknown';
+          phaseInfoEl.textContent = `Phase ${currentPhase + 1}: ${currentPlayerName} to ${
+            currentInputType === 'text' ? 'write' : 'draw'
+          }`;
+
+          setInput(currentInputType, clientId === currentPlayerId);
+          if (clientId === currentPlayerId) {
+            announce(
+              `Your turn to ${currentInputType === 'text' ? 'write' : 'draw'}`,
+            );
+          }
+          startTimer();
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
-
