@@ -9,72 +9,90 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const players = {};
-let playerOrder = [];
-const chain = [];
+function makeCode() {
+  // Generate 5 char alphanumeric code
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // exclude confusing letters
+  let code = '';
+  for (let i = 0; i < 5; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
 
-let phaseIndex = -1;
-let phaseTimer = null;
-const PHASE_DURATION = 30000;
+// Lobby data structure
+const lobbies = {}; 
+// lobbyCode => {
+//   players: { id: name }
+//   playerOrder: [id]
+//   chain: []
+//   phaseIndex: -1
+//   phaseTimer: null
+//   isPublic: bool
+// }
 
-function broadcast(data) {
+function broadcastLobby(lobby, data) {
   const msg = JSON.stringify(data);
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) client.send(msg);
+  lobby.playersSockets.forEach(ws => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
 }
 
-function sendPlayersUpdate() {
-  broadcast({ t: 'playersUpdate', players, order: playerOrder });
+function sendPlayersUpdate(lobby) {
+  broadcastLobby(lobby, {
+    t: 'playersUpdate',
+    players: lobby.players,
+    order: lobby.playerOrder,
+  });
 }
 
-function sendChainUpdate() {
-  broadcast({ t: 'chainUpdate', chain });
+function sendChainUpdate(lobby) {
+  broadcastLobby(lobby, { t: 'chainUpdate', chain: lobby.chain });
 }
 
-function getCurrentPlayerId() {
-  if (playerOrder.length === 0) return null;
-  return playerOrder[phaseIndex % playerOrder.length];
+function getCurrentPlayerId(lobby) {
+  if (lobby.playerOrder.length === 0) return null;
+  return lobby.playerOrder[lobby.phaseIndex % lobby.playerOrder.length];
 }
 
-function getCurrentInputType() {
-  // Even phases = text, odd phases = drawing
-  return phaseIndex % 2 === 0 ? 'text' : 'drawing';
+function getCurrentInputType(lobby) {
+  return lobby.phaseIndex % 2 === 0 ? 'text' : 'drawing';
 }
 
-function startNextPhase() {
-  if (playerOrder.length === 0) return;
+function startNextPhase(lobbyCode) {
+  const lobby = lobbies[lobbyCode];
+  if (!lobby) return;
+  if (lobby.playerOrder.length === 0) return;
 
-  phaseIndex++;
-  if (phaseIndex >= playerOrder.length * 2) {
-    // Game restart after one full cycle
-    phaseIndex = 0;
-    chain.length = 0;
-    console.log('Game restarted');
+  lobby.phaseIndex++;
+  if (lobby.phaseIndex >= lobby.playerOrder.length * 2) {
+    // restart after full cycle
+    lobby.phaseIndex = 0;
+    lobby.chain.length = 0;
+    console.log(`Lobby ${lobbyCode} restarted game`);
   }
 
-  const playerId = getCurrentPlayerId();
-  const inputType = getCurrentInputType();
+  const playerId = getCurrentPlayerId(lobby);
+  const inputType = getCurrentInputType(lobby);
 
-  broadcast({
+  broadcastLobby(lobby, {
     t: 'phaseStart',
     playerId,
     inputType,
-    phaseIndex,
+    phaseIndex: lobby.phaseIndex,
   });
-  sendChainUpdate();
+  sendChainUpdate(lobby);
 
-  console.log(`Phase ${phaseIndex + 1} started. Player ${playerId} to ${inputType}`);
-
-  clearTimeout(phaseTimer);
-  phaseTimer = setTimeout(() => {
-    // Auto advance if no input in time
-    startNextPhase();
-  }, PHASE_DURATION);
+  clearTimeout(lobby.phaseTimer);
+  lobby.phaseTimer = setTimeout(() => {
+    startNextPhase(lobbyCode);
+  }, 30000);
 }
 
+// Keep track of each ws's lobby and id
+const wsClients = new Map(); // ws => { lobbyCode, id }
+
 wss.on('connection', (ws) => {
-  let clientId = null;
+  wsClients.set(ws, { lobbyCode: null, id: null });
 
   ws.on('message', (msg) => {
     let data;
@@ -84,75 +102,117 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    if (data.t === 'join') {
-      clientId = data.id;
-      let name = data.name && data.name.trim();
-      if (!name) {
-        name = `Guest${Math.floor(10000 + Math.random() * 90000)}`;
+    if (data.t === 'createLobby') {
+      // Create lobby
+      let code;
+      do {
+        code = makeCode();
+      } while (lobbies[code]);
+
+      lobbies[code] = {
+        players: {},
+        playerOrder: [],
+        chain: [],
+        phaseIndex: -1,
+        phaseTimer: null,
+        isPublic: !!data.isPublic,
+        playersSockets: new Set(),
+      };
+
+      ws.send(JSON.stringify({ t: 'lobbyCreated', code }));
+      return;
+    }
+
+    if (data.t === 'listLobbies') {
+      // Return public lobby codes with player counts
+      const publicLobbies = Object.entries(lobbies)
+        .filter(([, l]) => l.isPublic)
+        .map(([code, l]) => ({
+          code,
+          players: Object.keys(l.players).length,
+        }));
+      ws.send(JSON.stringify({ t: 'publicLobbies', lobbies: publicLobbies }));
+      return;
+    }
+
+    if (data.t === 'joinLobby') {
+      const { code, id, name } = data;
+      const lobby = lobbies[code];
+      if (!lobby) {
+        ws.send(JSON.stringify({ t: 'error', msg: 'Lobby not found' }));
+        return;
       }
-      players[clientId] = name;
 
-      if (!playerOrder.includes(clientId)) playerOrder.push(clientId);
+      const playerName = (name && name.trim()) || `Guest${Math.floor(10000 + Math.random() * 90000)}`;
 
-      sendPlayersUpdate();
+      lobby.players[id] = playerName;
+      if (!lobby.playerOrder.includes(id)) lobby.playerOrder.push(id);
+      lobby.playersSockets.add(ws);
 
-      if (phaseIndex === -1 && playerOrder.length >= 2) {
-        phaseIndex = -1;
-        startNextPhase();
+      wsClients.set(ws, { lobbyCode: code, id });
+
+      sendPlayersUpdate(lobby);
+
+      // Start game if enough players
+      if (lobby.phaseIndex === -1 && lobby.playerOrder.length >= 2) {
+        lobby.phaseIndex = -1;
+        startNextPhase(code);
       }
       return;
     }
 
     if (data.t === 'input') {
-      if (data.id !== getCurrentPlayerId()) {
-        // Not current player's turn
-        return;
-      }
+      const client = wsClients.get(ws);
+      if (!client || !client.lobbyCode) return;
+      const lobby = lobbies[client.lobbyCode];
+      if (!lobby) return;
 
-      if (data.type !== getCurrentInputType()) return;
+      if (data.id !== getCurrentPlayerId(lobby)) return;
+      if (data.type !== getCurrentInputType(lobby)) return;
 
       if (data.type === 'text' && typeof data.content === 'string') {
-        chain[phaseIndex] = { type: 'text', content: data.content };
-        startNextPhase();
+        lobby.chain[lobby.phaseIndex] = { type: 'text', content: data.content };
+        startNextPhase(client.lobbyCode);
       } else if (data.type === 'drawing' && Array.isArray(data.commands) && data.brush) {
-        chain[phaseIndex] = {
+        lobby.chain[lobby.phaseIndex] = {
           type: 'drawing',
           commands: data.commands,
           brush: data.brush,
         };
-        startNextPhase();
+        startNextPhase(client.lobbyCode);
       }
     }
   });
 
   ws.on('close', () => {
-    if (!clientId) return;
-
-    delete players[clientId];
-    playerOrder = playerOrder.filter(id => id !== clientId);
-
-    sendPlayersUpdate();
-
-    if (playerOrder.length === 0) {
-      phaseIndex = -1;
-      chain.length = 0;
-      clearTimeout(phaseTimer);
+    const client = wsClients.get(ws);
+    if (!client || !client.lobbyCode) {
+      wsClients.delete(ws);
+      return;
     }
+    const lobby = lobbies[client.lobbyCode];
+    if (!lobby) {
+      wsClients.delete(ws);
+      return;
+    }
+    const { id } = client;
+    delete lobby.players[id];
+    lobby.playerOrder = lobby.playerOrder.filter((pid) => pid !== id);
+    lobby.playersSockets.delete(ws);
+
+    sendPlayersUpdate(lobby);
+
+    if (lobby.playerOrder.length === 0) {
+      // Delete empty lobby
+      clearTimeout(lobby.phaseTimer);
+      delete lobbies[client.lobbyCode];
+      console.log(`Lobby ${client.lobbyCode} deleted (empty)`);
+    }
+
+    wsClients.delete(ws);
   });
 
-  // Send current state to new clients
-  ws.send(JSON.stringify({ t: 'playersUpdate', players, order: playerOrder }));
-  ws.send(JSON.stringify({ t: 'chainUpdate', chain }));
-  if (phaseIndex >= 0) {
-    ws.send(JSON.stringify({
-      t: 'phaseStart',
-      playerId: getCurrentPlayerId(),
-      inputType: getCurrentInputType(),
-      phaseIndex,
-    }));
-  }
 });
-
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
