@@ -1,6 +1,3 @@
-// server.js
-// Run with: node server.js
-
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
@@ -12,20 +9,45 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+const players = {}; // id -> name
+
 wss.on('connection', (ws) => {
-  console.log('client connected');
+  let clientId = null;
 
   ws.on('message', (message) => {
-    // Broadcast incoming message to all clients
-    for (const client of wss.clients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
+    let data;
+    try { data = JSON.parse(message); } catch (e) { return; }
+
+    if (data.t === 'meta') {
+      clientId = data.id;
+      players[clientId] = data.name || 'anon';
+      broadcastPlayers();
     }
+
+    // Broadcast drawing/clear/meta to everyone
+    broadcast(data);
   });
 
-  ws.on('close', () => console.log('client disconnected'));
+  ws.on('close', () => {
+    if (clientId && players[clientId]) {
+      delete players[clientId];
+      broadcastPlayers();
+    }
+  });
 });
+
+function broadcast(obj) {
+  const msg = JSON.stringify(obj);
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(msg);
+    }
+  }
+}
+
+function broadcastPlayers() {
+  broadcast({ t: 'players', players });
+}
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server listening on http://localhost:${PORT}`));
