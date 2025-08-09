@@ -1,76 +1,13 @@
-@import url('https://fonts.googleapis.com/css2?family=Poppins&display=swap');
-
-body {
-  font-family: 'Poppins', sans-serif;
-  background: #1e1e2f;
-  color: #e0e0e0;
-  margin: 0;
-  padding: 20px;
-  user-select: none;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  min-height: 100vh;
-}
-
-#container {
-  width: 820px;
-  max-width: 100%;
-  background: #2c2c44;
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-h1 { text-align:center; color:#f5a623; margin:0 0 8px 0; }
-
-button {
-  background: #f5a623;
-  border: none;
-  border-radius: 10px;
-  padding: 8px 16px;
-  font-weight: 700;
-  color: #222;
-  cursor: pointer;
-}
-button:disabled { background:#9a9766; cursor:not-allowed; }
-
-input[type='text'] {
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: none;
-  background: #45456a;
-  color: #eee;
-}
-
-.row { display:flex; gap:8px; align-items:center; }
-
-#homeScreen, #gameScreen { display:none; gap:12px; }
-#homeScreen.active, #gameScreen.active { display:flex; }
-
-#lobbiesList { max-height:180px; overflow:auto; background:#37374f; padding:10px; border-radius:8px; }
-.lobby-item { display:flex; justify-content:space-between; padding:8px; margin-bottom:6px; border-radius:6px; cursor:pointer; }
-.lobby-item:hover { background:#444466; }
-
-#players { margin-top:8px; background:#37374f; padding:8px; border-radius:8px; max-height:120px; overflow:auto; }
-.player-name { padding:4px 6px; border-radius:6px; display:inline-block; margin:3px 4px 3px 0; background:#555577; }
-.player-current { background:#f5a623; color:#222; font-weight:700; }
-
-#phaseInfo { text-align:center; color:#f5a623; font-weight:700; font-size:1.1rem; margin-top:6px; }
-#timer { text-align:center; color:#cfd0d8; }
-
-#inputSection { display:flex; flex-direction:column; align-items:center; gap:12px; }
-#inputText { width:100%; min-height:140px; padding:12px; border-radius:8px; display:none; background:#45456a; color:#eee; border:none; }
-#inputCanvas { display:none; border-radius:10px; background:#29294a; border:2px solid #f5a623; width:640px; height:440px; }
-
-#chain { margin-top:10px; max-height:300px; overflow:auto; background:#313144; padding:10px; border-radius:8px; }
-.chain-entry { margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid rgba(255,255,255,0.04); }
-.chain-text { color:#f5a623; text-align:center; font-style:italic; }
-
-canvas.chain-canvas { width:640px; height:440px; display:block; margin:10px auto; border-radius:10px; }
-
-#status { text-align:center; color:#cfd0d8; }
-#homeStatus { color:#bfc0c8; }
+body { font-family: Arial, Helvetica, sans-serif; background:#f2f6fb; color:#111; margin:0; padding:20px;}
+.screen { max-width:900px; margin:10px auto; }
+.hidden { display:none; }
+.card { background:white; padding:12px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.06); margin-bottom:12px;}
+input { padding:8px; margin:6px 0; width:100%; box-sizing:border-box; }
+button { padding:8px 12px; margin:6px; cursor:pointer; }
+#players { background:#fff; padding:10px; border-radius:8px; margin:8px 0; }
+.player { padding:6px 8px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; }
+.muted { color:#666; margin-top:8px; }
+#phaseContent { margin:12px 0; }
+canvas { border:1px solid #ccc; background:white; touch-action: none; }
+.chain { background:#fff; padding:10px; border-radius:8px; margin-bottom:10px; }
+.chain-item { border: 1px dashed #ddd; padding:8px; margin:6px 0; border-radius:6px; background:#fafafa; }
