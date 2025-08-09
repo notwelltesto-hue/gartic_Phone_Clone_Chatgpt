@@ -1,0 +1,203 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GarticClone — Shared Canvas</title>
+  <style>
+    body { font-family: system-ui,Segoe UI,Roboto,Arial; display:flex; gap:12px; padding:12px; }
+    #ui { width:260px; }
+    canvas { border:1px solid #444; touch-action:none; }
+    .tool { margin-bottom:8px; }
+    #players { max-height:140px; overflow:auto; border:1px solid #ddd; padding:6px }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <h3>GarticClone</h3>
+    <div class="tool">
+      <label>Username <input id="name" placeholder="player123" /></label>
+    </div>
+    <div class="tool">
+      <label>Color <input type="color" id="color" value="#000000"/></label>
+    </div>
+    <div class="tool">
+      <label>Brush <input id="size" type="range" min="1" max="30" value="3"/></label>
+    </div>
+    <div class="tool">
+      <button id="clearBtn">Clear canvas</button>
+    </div>
+    <div class="tool">
+      <strong>Players</strong>
+      <div id="players">(no one yet)</div>
+    </div>
+    <p style="font-size:12px;color:#666">Simple WebSocket-based shared canvas. Open multiple tabs to test locally.</p>
+  </div>
+
+  <div>
+    <canvas id="c" width="800" height="600"></canvas>
+  </div>
+
+  <script>
+  // --- Basic shared canvas client ---
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const nameInput = document.getElementById('name');
+  const colorInput = document.getElementById('color');
+  const sizeInput = document.getElementById('size');
+  const clearBtn = document.getElementById('clearBtn');
+  const playersEl = document.getElementById('players');
+
+  // Simple unique id for this client (not secure, just for demo)
+  const clientId = Math.random().toString(36).slice(2,9);
+
+  // Connect to WebSocket server on same host
+  const loc = window.location;
+  const wsProtocol = (loc.protocol === 'https:') ? 'wss://' : 'ws://';
+  const ws = new WebSocket(wsProtocol + loc.host);
+
+  // Track drawing state
+  let drawing = false;
+  let last = { x: 0, y: 0 };
+
+  // Keep a list of players (simple map: id->name)
+  const players = {};
+
+  function toCanvasPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = ((e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left) * (canvas.width / rect.width);
+    const y = ((e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top) * (canvas.height / rect.height);
+    return { x, y };
+  }
+
+  function send(obj) {
+    const data = JSON.stringify(obj);
+    if (ws.readyState === WebSocket.OPEN) ws.send(data);
+  }
+
+  // Drawing logic
+  function beginStroke(pt) {
+    drawing = true;
+    last = pt;
+    ctx.beginPath();
+    ctx.moveTo(pt.x, pt.y);
+  }
+
+  function strokeTo(pt, color, size) {
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.lineTo(pt.x, pt.y);
+    ctx.stroke();
+    last = pt;
+  }
+
+  function endStroke() {
+    drawing = false;
+    ctx.closePath();
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const pt = toCanvasPos(e);
+    beginStroke(pt);
+    send({ t: 'begin', id: clientId, name: nameInput.value || 'anon', color: colorInput.value, size: +sizeInput.value, x: pt.x, y: pt.y });
+    e.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drawing) return;
+    const pt = toCanvasPos(e);
+    strokeTo(pt, colorInput.value, +sizeInput.value);
+    send({ t: 'stroke', id: clientId, x: pt.x, y: pt.y });
+    e.preventDefault();
+  });
+
+  window.addEventListener('pointerup', (e) => {
+    if (!drawing) return;
+    endStroke();
+    send({ t: 'end', id: clientId });
+  });
+
+  clearBtn.addEventListener('click', () => {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    send({ t: 'clear', id: clientId });
+  });
+
+  // Handle incoming messages (from server)
+  ws.addEventListener('message', (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+
+    // Keep players list updated whenever someone sends a 'meta' join message
+    if (msg.t === 'meta') {
+      players[msg.id] = msg.name || 'anon';
+      updatePlayers();
+      return;
+    }
+
+    if (msg.t === 'clear') {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      return;
+    }
+
+    // If another client started drawing
+    if (msg.t === 'begin') {
+      // set brush properties for this incoming stroke
+      ctx.beginPath();
+      ctx.moveTo(msg.x, msg.y);
+      ctx.lineWidth = msg.size;
+      ctx.strokeStyle = msg.color;
+      return;
+    }
+
+    if (msg.t === 'stroke') {
+      ctx.lineTo(msg.x, msg.y);
+      ctx.stroke();
+      return;
+    }
+
+    if (msg.t === 'end') {
+      ctx.closePath();
+      return;
+    }
+  });
+
+  ws.addEventListener('open', () => {
+    // announce presence to others
+    send({ t: 'meta', id: clientId, name: nameInput.value || 'anon' });
+  });
+
+  nameInput.addEventListener('change', () => {
+    send({ t: 'meta', id: clientId, name: nameInput.value || 'anon' });
+  });
+
+  function updatePlayers() {
+    const list = Object.entries(players).map(([id, n]) => `${n} (${id === clientId ? 'you' : id})`);
+    playersEl.textContent = list.length ? list.join('\n') : '(no one yet)';
+  }
+
+  // Resize canvas to be crisp on high-DPI
+  function fixDPI() {
+    const ratio = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || canvas.width;
+    const h = canvas.clientHeight || canvas.height;
+    canvas.width = w * ratio;
+    canvas.height = h * ratio;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    ctx.scale(ratio, ratio);
+  }
+
+  // set initial drawing style
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // call fixDPI once in case of HiDPI displays
+  fixDPI();
+
+  // basic reconnect -- try to reopen after a second if closed
+  ws.addEventListener('close', () => setTimeout(() => location.reload(), 1000));
+  </script>
+</body>
+</html>
