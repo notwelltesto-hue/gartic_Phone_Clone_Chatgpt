@@ -9,7 +9,7 @@
     #ui { width:260px; }
     canvas { border:1px solid #444; touch-action:none; }
     .tool { margin-bottom:8px; }
-    #players { max-height:140px; overflow:auto; border:1px solid #ddd; padding:6px }
+    #players { max-height:140px; overflow:auto; border:1px solid #ddd; padding:6px; white-space: pre-line; }
   </style>
 </head>
 <body>
@@ -31,7 +31,6 @@
       <strong>Players</strong>
       <div id="players">(no one yet)</div>
     </div>
-    <p style="font-size:12px;color:#666">Simple WebSocket-based shared canvas. Open multiple tabs to test locally.</p>
   </div>
 
   <div>
@@ -39,7 +38,6 @@
   </div>
 
   <script>
-  // --- Basic shared canvas client ---
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
   const nameInput = document.getElementById('name');
@@ -48,37 +46,27 @@
   const clearBtn = document.getElementById('clearBtn');
   const playersEl = document.getElementById('players');
 
-  // Simple unique id for this client (not secure, just for demo)
   const clientId = Math.random().toString(36).slice(2,9);
+  const wsProtocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+  const ws = new WebSocket(wsProtocol + location.host);
 
-  // Connect to WebSocket server on same host
-  const loc = window.location;
-  const wsProtocol = (loc.protocol === 'https:') ? 'wss://' : 'ws://';
-  const ws = new WebSocket(wsProtocol + loc.host);
-
-  // Track drawing state
   let drawing = false;
-  let last = { x: 0, y: 0 };
-
-  // Keep a list of players (simple map: id->name)
-  const players = {};
 
   function toCanvasPos(e) {
     const rect = canvas.getBoundingClientRect();
-    const x = ((e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left) * (canvas.width / rect.width);
-    const y = ((e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top) * (canvas.height / rect.height);
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = ((e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left) * scaleX;
+    const y = ((e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top) * scaleY;
     return { x, y };
   }
 
   function send(obj) {
-    const data = JSON.stringify(obj);
-    if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
 
-  // Drawing logic
   function beginStroke(pt) {
     drawing = true;
-    last = pt;
     ctx.beginPath();
     ctx.moveTo(pt.x, pt.y);
   }
@@ -90,7 +78,6 @@
     ctx.lineWidth = size;
     ctx.lineTo(pt.x, pt.y);
     ctx.stroke();
-    last = pt;
   }
 
   function endStroke() {
@@ -113,7 +100,7 @@
     e.preventDefault();
   });
 
-  window.addEventListener('pointerup', (e) => {
+  window.addEventListener('pointerup', () => {
     if (!drawing) return;
     endStroke();
     send({ t: 'end', id: clientId });
@@ -124,15 +111,12 @@
     send({ t: 'clear', id: clientId });
   });
 
-  // Handle incoming messages (from server)
   ws.addEventListener('message', (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
 
-    // Keep players list updated whenever someone sends a 'meta' join message
-    if (msg.t === 'meta') {
-      players[msg.id] = msg.name || 'anon';
-      updatePlayers();
+    if (msg.t === 'players') {
+      playersEl.textContent = Object.values(msg.players).join('\n');
       return;
     }
 
@@ -141,9 +125,7 @@
       return;
     }
 
-    // If another client started drawing
     if (msg.t === 'begin') {
-      // set brush properties for this incoming stroke
       ctx.beginPath();
       ctx.moveTo(msg.x, msg.y);
       ctx.lineWidth = msg.size;
@@ -164,40 +146,12 @@
   });
 
   ws.addEventListener('open', () => {
-    // announce presence to others
     send({ t: 'meta', id: clientId, name: nameInput.value || 'anon' });
   });
 
   nameInput.addEventListener('change', () => {
     send({ t: 'meta', id: clientId, name: nameInput.value || 'anon' });
   });
-
-  function updatePlayers() {
-    const list = Object.entries(players).map(([id, n]) => `${n} (${id === clientId ? 'you' : id})`);
-    playersEl.textContent = list.length ? list.join('\n') : '(no one yet)';
-  }
-
-  // Resize canvas to be crisp on high-DPI
-  function fixDPI() {
-    const ratio = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth || canvas.width;
-    const h = canvas.clientHeight || canvas.height;
-    canvas.width = w * ratio;
-    canvas.height = h * ratio;
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-    ctx.scale(ratio, ratio);
-  }
-
-  // set initial drawing style
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
-  // call fixDPI once in case of HiDPI displays
-  fixDPI();
-
-  // basic reconnect -- try to reopen after a second if closed
-  ws.addEventListener('close', () => setTimeout(() => location.reload(), 1000));
   </script>
 </body>
 </html>
