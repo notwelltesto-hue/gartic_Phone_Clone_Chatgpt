@@ -5,14 +5,15 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { maxHttpBufferSize: 1e7 }); // allow larger payloads
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.use(express.static('public'));
-app.use(express.json({ limit: '10mb' })); // accept big base64 images
+app.use(express.json({ limit: '15mb' }));
 
-// In-memory rooms: { code: { players: [{id,name}], hostId, isPublic, state, round, nRounds, slotPrompts, submissions } }
+// rooms: code -> room
+// room: { players:[{id,name}], hostId, isPublic, state, round, nRounds, slotPrompts, submissions, votes }
 const rooms = {};
 const randomPrompts = [
   "A cat riding a skateboard",
@@ -36,11 +37,8 @@ function publicRoomList() {
     .map(([code, r]) => ({ code, players: r.players.length }));
 }
 
-// Socket events
 io.on('connection', socket => {
   console.log('connect', socket.id);
-
-  // Send current public lobbies on new connection
   socket.emit('lobbyList', publicRoomList());
 
   socket.on('createLobby', ({ name, isPublic }) => {
@@ -53,7 +51,8 @@ io.on('connection', socket => {
       round: 0,
       nRounds: 0,
       slotPrompts: [],
-      submissions: []
+      submissions: [], // submissions[round][slot] = {data,thumb,fromId}
+      votes: null // { round: r, votes: { slot: {optionIndex:count,...} } }
     };
     socket.join(code);
     socket.emit('lobbyCreated', { code });
@@ -61,20 +60,12 @@ io.on('connection', socket => {
     updateRoomPlayers(code);
   });
 
-  socket.on('getLobbies', () => {
-    socket.emit('lobbyList', publicRoomList());
-  });
+  socket.on('getLobbies', () => socket.emit('lobbyList', publicRoomList()));
 
   socket.on('joinLobby', ({ code, name }) => {
     const room = rooms[code];
-    if (!room) {
-      socket.emit('errorMsg', 'Lobby not found');
-      return;
-    }
-    if (room.state !== 'lobby') {
-      socket.emit('errorMsg', 'Game already started');
-      return;
-    }
+    if (!room) { socket.emit('errorMsg', 'Lobby not found'); return; }
+    if (room.state !== 'lobby') { socket.emit('errorMsg', 'Game already started'); return; }
     room.players.push({ id: socket.id, name });
     socket.join(code);
     socket.emit('joined', { code });
@@ -83,7 +74,8 @@ io.on('connection', socket => {
   });
 
   socket.on('leaveLobby', ({ code }) => {
-    leaveRoom(socket.id, code);
+    const removed = leaveRoom(socket.id, code);
+    if (removed) io.emit('lobbyList', publicRoomList());
   });
 
   socket.on('toggleReady', ({ code }) => {
@@ -98,16 +90,9 @@ io.on('connection', socket => {
   socket.on('startGame', ({ code }) => {
     const room = rooms[code];
     if (!room) return;
-    if (socket.id !== room.hostId) {
-      socket.emit('errorMsg', 'Only host can start');
-      return;
-    }
-    if (room.players.length < 2) {
-      socket.emit('errorMsg', 'Need at least 2 players');
-      return;
-    }
+    if (socket.id !== room.hostId) { socket.emit('errorMsg', 'Only host can start'); return; }
+    if (room.players.length < 2) { socket.emit('errorMsg', 'Need at least 2 players'); return; }
 
-    // Request initial prompts from every player (they can type or server will pick random)
     room.state = 'gatheringPrompts';
     room.slotPrompts = new Array(room.players.length).fill(null);
     io.to(code).emit('requestInitialPrompts');
@@ -122,63 +107,58 @@ io.on('connection', socket => {
     room.slotPrompts[idx] = (prompt && prompt.trim()) || randomPrompts[Math.floor(Math.random()*randomPrompts.length)];
 
     if (room.slotPrompts.every(x => x !== null)) {
-      // all prompts collected -> init game
       const n = room.players.length;
       room.nRounds = n;
       room.round = 0;
-      // submissions is an array of rounds, each is array of size n (slots)
       room.submissions = Array.from({ length: n }, () => Array(n).fill(null));
-      // store initial prompts separately
-      // Move to first round: draw round (round 0 is draw)
+      room.votes = null;
       room.state = 'playing';
-      // send first round content
       distributeRound(code);
       updateRoomPlayers(code);
-    } else {
-      updateRoomPlayers(code);
-    }
+    } else updateRoomPlayers(code);
   });
 
+  // payload: { slotIndex, data, thumb }  (data = full dataURL for drawings or text)
   socket.on('submitRound', ({ code, payload }) => {
-    // payload: { slotIndex, data } where slotIndex is the slot being acted on
     const room = rooms[code];
     if (!room || room.state !== 'playing') return;
     const r = room.round;
     const slotIndex = payload.slotIndex;
     if (slotIndex == null || slotIndex < 0 || slotIndex >= room.players.length) return;
-    // store in submissions[r][slotIndex]
-    room.submissions[r][slotIndex] = payload.data; // either dataURL or text
-    // check if round complete (all slots have submission for round r)
+    room.submissions[r][slotIndex] = { data: payload.data, thumb: payload.thumb || null, fromId: socket.id };
     const allDone = room.submissions[r].every(x => x !== null);
     if (allDone) {
-      // advance
       room.round++;
       if (room.round >= room.nRounds) {
         room.state = 'reveal';
-        // send reveal
         sendReveal(code);
         updateRoomPlayers(code);
       } else {
         distributeRound(code);
         updateRoomPlayers(code);
       }
-    } else {
-      updateRoomPlayers(code);
-    }
+    } else updateRoomPlayers(code);
+  });
+
+  // votes: { slot, choiceIndex } - simple voting on reveal items (e.g., best drawing for a chain)
+  socket.on('vote', ({ code, slot, choiceIndex }) => {
+    const room = rooms[code];
+    if (!room || room.state !== 'reveal') return;
+    if (!room.votes) room.votes = {};
+    if (!room.votes[slot]) room.votes[slot] = {};
+    room.votes[slot][choiceIndex] = (room.votes[slot][choiceIndex] || 0) + 1;
+    // broadcast updated vote counts for the slot
+    io.to(code).emit('voteUpdate', { slot, counts: room.votes[slot] });
   });
 
   socket.on('disconnect', () => {
     console.log('disconnect', socket.id);
-    // remove player from any rooms
     for (const code of Object.keys(rooms)) {
-      if (leaveRoom(socket.id, code)) {
-        io.emit('lobbyList', publicRoomList());
-      }
+      if (leaveRoom(socket.id, code)) io.emit('lobbyList', publicRoomList());
     }
   });
 });
 
-// helper: update player lists to room
 function updateRoomPlayers(code) {
   const room = rooms[code];
   if (!room) return;
@@ -192,7 +172,6 @@ function updateRoomPlayers(code) {
   });
 }
 
-// helper: leave and cleanup
 function leaveRoom(socketId, code) {
   const room = rooms[code];
   if (!room) return false;
@@ -200,55 +179,33 @@ function leaveRoom(socketId, code) {
   if (idx !== -1) {
     room.players.splice(idx, 1);
     io.to(code).emit('systemMsg', 'A player left');
-    // if host left, pick new host
-    if (room.hostId === socketId) {
-      room.hostId = room.players.length ? room.players[0].id : null;
-    }
-    // if no players left, delete
-    if (room.players.length === 0) {
-      delete rooms[code];
-    } else {
-      updateRoomPlayers(code);
-    }
+    if (room.hostId === socketId) room.hostId = room.players.length ? room.players[0].id : null;
+    if (room.players.length === 0) delete rooms[code];
+    else updateRoomPlayers(code);
     return true;
   }
   return false;
 }
 
-// main algorithm: distribute content for current round to each player
 function distributeRound(code) {
   const room = rooms[code];
   if (!room) return;
   const r = room.round;
   const n = room.players.length;
-  // For each player p, compute the slotIndex they act on this round:
-  // slotIndex = (pIndex - r + n) % n
-  // If r==0 then p acts on their own slot -> initial prompt
   room.players.forEach((p, pIndex) => {
     const slotIndex = ((pIndex - r) % n + n) % n;
     let content;
-    if (r === 0) {
-      content = { type: 'prompt', data: room.slotPrompts[slotIndex] };
-    } else {
-      // they act on submissions from previous round for that slot
+    if (r === 0) content = { type: 'prompt', data: room.slotPrompts[slotIndex] };
+    else {
       const prev = room.submissions[r-1][slotIndex];
       const prevType = (r-1) % 2 === 0 ? 'image' : 'text';
-      content = { type: prevType, data: prev };
+      content = { type: prevType, data: prev ? prev.data : null, thumb: prev ? prev.thumb : null };
     }
-    // Determine whether this round expects drawing or text:
     const expecting = (r % 2 === 0) ? 'draw' : 'write';
-    // Tell the socket
-    io.to(p.id).emit('roundStart', {
-      round: r,
-      nRounds: n,
-      expecting,
-      slotIndex,
-      content
-    });
+    io.to(p.id).emit('roundStart', { round: r, nRounds: n, expecting, slotIndex, content, timeSec: 90 });
   });
 }
 
-// reveal: build chains for each slot (starting owner)
 function sendReveal(code) {
   const room = rooms[code];
   if (!room) return;
@@ -258,15 +215,19 @@ function sendReveal(code) {
     const chain = [];
     chain.push({ type: 'prompt', data: room.slotPrompts[slot] });
     for (let r = 0; r < n; r++) {
-      const item = room.submissions[r][slot];
+      const itemObj = room.submissions[r][slot];
       const type = r % 2 === 0 ? 'image' : 'text';
-      chain.push({ type, data: item });
+      const data = itemObj ? itemObj.data : null;
+      const thumb = itemObj ? itemObj.thumb : null;
+      chain.push({ type, data, thumb });
     }
-    chains.push({ slot, owner: room.players[slot] ? room.players[slot].name : 'Player', chain });
+    chains.push({ slot, owner: { name: room.players[slot] ? room.players[slot].name : 'Player' }, chain });
   }
+  // reset votes
+  room.votes = {};
   io.to(code).emit('reveal', { chains });
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on ${PORT}`);
 });
