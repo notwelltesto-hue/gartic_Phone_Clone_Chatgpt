@@ -1,0 +1,201 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins&display=swap');
+
+body {
+  font-family: 'Poppins', sans-serif;
+  background: #1e1e2f;
+  color: #e0e0e0;
+  margin: 0;
+  padding: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100vh;
+  user-select: none;
+}
+
+#container {
+  width: 360px;
+  background: #2c2c44;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.6);
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 24px;
+  font-weight: 700;
+  color: #f5a623;
+  text-shadow: 0 0 10px #f5a623aa;
+}
+
+label {
+  display: block;
+  margin-bottom: 12px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #a0a0b0;
+}
+
+#name {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 1rem;
+  border-radius: 8px;
+  border: none;
+  outline: none;
+  background: #45456a;
+  color: #eee;
+  transition: background 0.2s ease;
+}
+
+#name:focus {
+  background: #565678;
+  box-shadow: 0 0 6px #f5a623;
+}
+
+#players {
+  margin-top: 16px;
+  border: 1px solid #444466;
+  border-radius: 8px;
+  max-height: 90px;
+  overflow-y: auto;
+  padding: 10px;
+  font-size: 0.9rem;
+  background: #37374f;
+}
+
+.player-name {
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  user-select: text;
+}
+
+.player-current {
+  background: #f5a623;
+  color: #222;
+  font-weight: 700;
+  box-shadow: 0 0 8px #f5a623bb;
+}
+
+#phaseInfo {
+  margin-top: 18px;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #f5a623;
+  text-align: center;
+  min-height: 30px;
+  text-shadow: 0 0 5px #f5a623aa;
+}
+
+#timer {
+  font-size: 0.9rem;
+  text-align: center;
+  margin-top: 6px;
+  color: #c1c1c1;
+}
+
+#inputSection {
+  margin-top: 24px;
+  text-align: center;
+}
+
+#inputText {
+  width: 100%;
+  min-height: 80px;
+  font-size: 1.1rem;
+  border-radius: 10px;
+  border: none;
+  padding: 12px;
+  background: #45456a;
+  color: #eee;
+  resize: none;
+  box-shadow: inset 0 0 6px #3b3b5a;
+  display: none;
+}
+
+#inputText:focus {
+  outline: none;
+  background: #565678;
+  box-shadow: inset 0 0 8px #f5a623;
+}
+
+#inputCanvas {
+  display: none;
+  margin: 0 auto;
+  border-radius: 12px;
+  border: 2px solid #f5a623;
+  background: #29294a;
+  touch-action: none;
+  cursor: crosshair;
+  width: 320px;
+  height: 220px;
+  box-shadow: 0 0 12px #f5a62388;
+}
+
+#submitBtn {
+  margin-top: 18px;
+  padding: 14px 40px;
+  font-size: 1.2rem;
+  background: #f5a623;
+  border: none;
+  border-radius: 12px;
+  font-weight: 700;
+  color: #222;
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 4px 12px #f5a623cc;
+  transition: background 0.2s ease;
+}
+
+#submitBtn:disabled {
+  background: #999966;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+#chain {
+  margin-top: 24px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #37374f;
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: inset 0 0 15px #29294a;
+}
+
+.chain-entry {
+  margin-bottom: 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #565678aa;
+}
+
+.chain-text {
+  font-size: 1.1rem;
+  font-style: italic;
+  color: #f5a623;
+  text-align: center;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+canvas.chain-canvas {
+  display: block;
+  margin: 10px auto;
+  border-radius: 12px;
+  box-shadow: 0 0 10px #f5a623bb;
+  width: 320px;
+  height: 220px;
+  user-select: none;
+}
+
+#status {
+  margin-top: 14px;
+  font-weight: 600;
+  font-style: italic;
+  color: #bbb;
+  min-height: 24px;
+  text-align: center;
+  user-select: none;
+}
